@@ -131,6 +131,54 @@ Generates comparison CSVs under `e2e/` with MAPE and other accuracy metrics agai
 
 ---
 
+## Experimental Event-Level Simulator
+
+The `des` branch also contains an independent research MVP under
+`event_simulator/`. Unlike the existing analytical-plus-ML path, this simulator
+does not use MLP/RF predictions to close the final latency equation. It lowers
+supported operators into explicit events and derives duration from dependencies,
+resource capacity, and caller-supplied primitive calibration.
+
+```python
+from event_simulator import (
+    PrimitiveCalibration,
+    ResourceConfig,
+    build_report,
+    lower_silu_and_mul,
+    schedule,
+)
+
+calibration = PrimitiveCalibration(
+    {
+        "KernelLaunch": 0.5,
+        "GlobalLoad": 0.001,
+        "SFU": 0.002,
+        "FMA": 0.001,
+        "GlobalStore": 0.001,
+        "KernelComplete": 0.1,
+    }
+)
+resources = ResourceConfig(
+    {"launch": 1, "global_memory": 2, "sfu": 1, "alu": 2}
+)
+events = lower_silu_and_mul(
+    "silu-0", elements=4096, calibration=calibration
+)
+report = build_report(schedule(events, resources))
+print(report.to_dict())
+```
+
+All calibration values must use one consistent time unit; microseconds are
+recommended. Missing calibration and unknown resources fail immediately. The
+MVP supports a single device plus GEMM, RMSNorm, and SiLU-and-Mul lowering. It
+does not yet model attention, cache hierarchy, warp scheduling, NCCL, pipeline
+parallel timing, or online request scheduling.
+
+See [`docs/event_simulator_design.md`](docs/event_simulator_design.md) for the
+codebase analysis, measurement boundary, architecture, risks, and staged plan.
+
+---
+
 ## Supported Hardware
 
 | GPU | Architecture |
