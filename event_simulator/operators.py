@@ -699,12 +699,17 @@ def lower_flash_attention(
     )
 
     # Per-SM task chains (compute only, on tensor_core lanes)
-    all_last_sync_ids: list[str] = []
+    # Build event lists per SM first, then interleave by task round.
+    # Interleaving ensures the scheduler assigns different SMs' tasks to
+    # different lanes in parallel (scheduler is greedy first-ready-in-order).
+    sm_event_chains: list[list[Event]] = []
+    sm_last_sync_ids: list[str] = []
 
     for sm_idx, task_iterations in enumerate(sm_task_iterations):
         if not task_iterations:
             continue
 
+        chain: list[Event] = []
         prev_sync_id = launch_id
 
         for task_idx, iterations in enumerate(task_iterations):
@@ -714,13 +719,11 @@ def lower_flash_attention(
             effective_iterations = iterations * head_multiplier
             task_prefix = f"{kernel_id}:sm{sm_idx}:t{task_idx}"
 
-            # MMA ops: 4 * cta_q * cta_kv * head_dim * iterations
-            # (Q@K^T = 2*cta_q*cta_kv*head_dim, P@V = 2*cta_q*cta_kv*head_dim)
             mma_ops = 4 * cta_q * cta_kv * head_dim * effective_iterations
             mma_instructions = ceil_div(mma_ops, 256)
 
             compute_id = f"{task_prefix}:compute"
-            events.append(
+            chain.append(
                 _event(
                     compute_id,
                     "FA_Compute",
@@ -736,22 +739,33 @@ def lower_flash_attention(
             )
 
             sync_id = f"{task_prefix}:sync"
-            events.append(
-                _event(
-                    sync_id,
-                    "FA_TaskSync",
-                    kernel_id,
-                    stream_id,
-                    "launch",
-                    calibration,
+            chain.append(
+                Event(
+                    event_id=sync_id,
+                    event_type="FA_TaskSync",
+                    kernel_id=kernel_id,
+                    stream_id=stream_id,
+                    resource=None,
+                    duration=0.0,
                     cta_id=task_prefix,
                     dependencies=(compute_id,),
+                    stream_ordered=False,
                 )
             )
 
             prev_sync_id = sync_id
 
-        all_last_sync_ids.append(prev_sync_id)
+        if chain:
+            sm_event_chains.append(chain)
+            sm_last_sync_ids.append(prev_sync_id)
+
+    # Interleave: emit events round-robin across SMs (task0 from all SMs,
+    # then task1 from all SMs, ...) so scheduler parallelizes across lanes.
+    max_chain_len = max((len(c) for c in sm_event_chains), default=0)
+    for round_idx in range(max_chain_len):
+        for chain in sm_event_chains:
+            if round_idx < len(chain):
+                events.append(chain[round_idx])
 
     # Kernel completion: depends on all SM chains + DRAM event
     events.append(
@@ -762,7 +776,7 @@ def lower_flash_attention(
             stream_id,
             "launch",
             calibration,
-            dependencies=tuple(all_last_sync_ids) + (dram_event_id,),
+            dependencies=tuple(sm_last_sync_ids) + (dram_event_id,),
             stream_ordered=True,
         )
     )
