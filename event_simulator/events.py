@@ -7,18 +7,35 @@ from numbers import Real
 
 EVENT_TYPES = frozenset(
     {
+        # Kernel lifecycle
         "KernelLaunch",
+        "KernelComplete",
+        # CTA scheduling (wave-aware)
         "CTAAdmission",
+        "CTAAdmission_FullWave",
+        "CTAAdmission_TailWave",
+        # Global memory (cache-aware)
         "GlobalLoad",
+        "GlobalLoad_L2Hit",
+        "GlobalLoad_L2Miss",
         "GlobalStore",
+        # Shared memory
         "SharedLoad",
         "SharedStore",
+        # Compute (utilization-aware)
         "MMA",
+        "MMA_FullTile",
+        "MMA_PartialTile",
+        "MMA_PipelineDrain",
         "FMA",
         "SFU",
-        "Barrier",
         "Reduction",
-        "KernelComplete",
+        # Synchronization
+        "Barrier",
+        # FlashAttention task-level events
+        "FA_Compute",
+        "FA_Memory",
+        "FA_TaskSync",
     }
 )
 

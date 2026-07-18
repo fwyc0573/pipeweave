@@ -3,7 +3,15 @@ from __future__ import annotations
 from math import ceil
 
 from .events import Event
+from .hardware_adapter import HardwareConfig
 from .resources import PrimitiveCalibration
+from .structural import (
+    ceil_div,
+    compute_actual_tile_dims,
+    compute_l2_hit_ratio,
+    compute_wave_split,
+    is_edge_tile,
+)
 
 
 def _positive_integer(name: str, value: int) -> None:
@@ -361,3 +369,202 @@ def lower_silu_and_mul(
             stream_ordered=True,
         ),
     ]
+
+
+def lower_gemm_v2(
+    kernel_id: str,
+    *,
+    m: int,
+    n: int,
+    k: int,
+    tile_m: int,
+    tile_n: int,
+    calibration: PrimitiveCalibration,
+    hardware: HardwareConfig,
+    stream_id: str = "stream-0",
+    element_bytes: int = 2,
+    max_ctas_per_sm: int = 1,
+) -> list[Event]:
+    """Lower a tiled GEMM with structural decomposition.
+
+    Compared to lower_gemm, this version models:
+    - L2 cache hit/miss split for memory loads
+    - Full-wave vs tail-wave CTA admission
+    - Full vs partial tile MMA efficiency
+
+    The resulting event DAG produces a tighter lower bound on execution
+    time by capturing these structural effects explicitly.
+    """
+
+    for name, value in (
+        ("m", m),
+        ("n", n),
+        ("k", k),
+        ("tile_m", tile_m),
+        ("tile_n", tile_n),
+        ("element_bytes", element_bytes),
+        ("max_ctas_per_sm", max_ctas_per_sm),
+    ):
+        _positive_integer(name, value)
+
+    m_tiles = ceil_div(m, tile_m)
+    n_tiles = ceil_div(n, tile_n)
+    total_ctas = m_tiles * n_tiles
+
+    # Structural analysis
+    full_wave_ctas, tail_wave_ctas = compute_wave_split(
+        total_ctas, hardware.num_sms, max_ctas_per_sm
+    )
+
+    # L2 hit ratio depends on wave context (fewer concurrent CTAs in tail = more L2 per CTA)
+    working_set_per_cta = (tile_m * k + tile_n * k) * element_bytes
+    concurrent_full = min(total_ctas, hardware.num_sms * max_ctas_per_sm)
+    concurrent_tail = tail_wave_ctas if tail_wave_ctas > 0 else concurrent_full
+    l2_hit_full = compute_l2_hit_ratio(
+        working_set_per_cta, hardware.l2_cache_size_bytes, concurrent_full
+    )
+    l2_hit_tail = compute_l2_hit_ratio(
+        working_set_per_cta, hardware.l2_cache_size_bytes, concurrent_tail
+    )
+
+    # Emit events
+    launch_id = f"{kernel_id}:launch"
+    events: list[Event] = [
+        _event(
+            launch_id,
+            "KernelLaunch",
+            kernel_id,
+            stream_id,
+            "launch",
+            calibration,
+            stream_ordered=True,
+        )
+    ]
+    stores: list[str] = []
+
+    for cta_index in range(total_ctas):
+        cta_id = f"{kernel_id}:cta-{cta_index}"
+        is_tail = cta_index >= full_wave_ctas
+        is_partial = is_edge_tile(cta_index, m_tiles, n_tiles, m, n, tile_m, tile_n)
+        l2_hit = l2_hit_tail if is_tail else l2_hit_full
+
+        actual_m, actual_n = compute_actual_tile_dims(cta_index, m, n, tile_m, tile_n, n_tiles)
+
+        # 1. CTA Admission (wave-aware)
+        admission_type = "CTAAdmission_TailWave" if is_tail else "CTAAdmission_FullWave"
+        admission_id = f"{cta_id}:admission"
+        events.append(
+            _event(
+                admission_id,
+                admission_type,
+                kernel_id,
+                stream_id,
+                "sm",
+                calibration,
+                cta_id=cta_id,
+                dependencies=(launch_id,),
+            )
+        )
+
+        # 2. Memory loads — split into L2 hit and L2 miss portions
+        #    Loads run in PARALLEL with compute (pipeline overlap).
+        #    Both depend on admission; store depends on BOTH completing.
+        load_bytes = (actual_m * k + actual_n * k) * element_bytes
+        l2_hit_bytes = int(load_bytes * l2_hit)
+        l2_miss_bytes = load_bytes - l2_hit_bytes
+
+        load_event_ids: list[str] = []
+
+        if l2_hit_bytes > 0:
+            l2_hit_id = f"{cta_id}:load-l2hit"
+            events.append(
+                _event(
+                    l2_hit_id,
+                    "GlobalLoad_L2Hit",
+                    kernel_id,
+                    stream_id,
+                    "l2_bandwidth",
+                    calibration,
+                    quantity=l2_hit_bytes,
+                    cta_id=cta_id,
+                    dependencies=(admission_id,),
+                    bytes=l2_hit_bytes,
+                )
+            )
+            load_event_ids.append(l2_hit_id)
+
+        if l2_miss_bytes > 0:
+            l2_miss_id = f"{cta_id}:load-l2miss"
+            events.append(
+                _event(
+                    l2_miss_id,
+                    "GlobalLoad_L2Miss",
+                    kernel_id,
+                    stream_id,
+                    "dram_bandwidth",
+                    calibration,
+                    quantity=l2_miss_bytes,
+                    cta_id=cta_id,
+                    dependencies=(admission_id,),
+                    bytes=l2_miss_bytes,
+                )
+            )
+            load_event_ids.append(l2_miss_id)
+
+        # 3. MMA (tile-aware) — runs in PARALLEL with memory loads
+        #    This models the K-iteration double-buffering pipeline overlap:
+        #    in steady state, load[k+1] overlaps with compute[k].
+        #    For the roofline lower bound, CTA time = max(load_time, compute_time).
+        mma_type = "MMA_PartialTile" if is_partial else "MMA_FullTile"
+        mma_instructions = ceil_div(actual_m * actual_n * k, 256)
+        mma_id = f"{cta_id}:mma"
+        events.append(
+            _event(
+                mma_id,
+                mma_type,
+                kernel_id,
+                stream_id,
+                "tensor_core",
+                calibration,
+                quantity=mma_instructions,
+                cta_id=cta_id,
+                dependencies=(admission_id,),
+                instruction_count=mma_instructions,
+            )
+        )
+
+        # 4. Store — depends on BOTH load and MMA completing (join point)
+        #    This gives CTA duration = max(load_time, compute_time) + store_time
+        store_bytes = actual_m * actual_n * element_bytes
+        store_id = f"{cta_id}:store"
+        store_deps = tuple(load_event_ids + [mma_id]) if load_event_ids else (mma_id,)
+        events.append(
+            _event(
+                store_id,
+                "GlobalStore",
+                kernel_id,
+                stream_id,
+                "dram_bandwidth",
+                calibration,
+                quantity=store_bytes,
+                cta_id=cta_id,
+                dependencies=store_deps,
+                bytes=store_bytes,
+            )
+        )
+        stores.append(store_id)
+
+    # Kernel completion
+    events.append(
+        _event(
+            f"{kernel_id}:complete",
+            "KernelComplete",
+            kernel_id,
+            stream_id,
+            "launch",
+            calibration,
+            dependencies=tuple(stores),
+            stream_ordered=True,
+        )
+    )
+    return events
