@@ -539,3 +539,231 @@ def lower_gemm_v2(
         )
     )
     return events
+
+
+def _import_fa_schedulers():
+    """Import FA scheduler functions from analytical_model package."""
+    import sys
+    from pathlib import Path
+
+    am_dir = str(Path(__file__).resolve().parent.parent / "analytical_model")
+    if am_dir not in sys.path:
+        sys.path.insert(0, am_dir)
+    from fa3_calculator import (  # noqa: E402
+        FA3GetCTATileSize,
+        calculate_fa3_ops,
+        fa3_scheduler,
+    )
+    from fa2_calculator import (  # noqa: E402
+        FA2DetermineCtaTileQ,
+        NVIDIACTASchedulerRR,
+        PrefillBinarySearchKVChunkSize,
+        calculate_fa2_ops,
+        create_fa2_cta_workload,
+    )
+
+    return {
+        "fa3_scheduler": fa3_scheduler,
+        "FA3GetCTATileSize": FA3GetCTATileSize,
+        "calculate_fa3_ops": calculate_fa3_ops,
+        "fa2_scheduler_cls": NVIDIACTASchedulerRR,
+        "FA2DetermineCtaTileQ": FA2DetermineCtaTileQ,
+        "PrefillBinarySearchKVChunkSize": PrefillBinarySearchKVChunkSize,
+        "create_fa2_cta_workload": create_fa2_cta_workload,
+        "calculate_fa2_ops": calculate_fa2_ops,
+    }
+
+
+def lower_flash_attention(
+    kernel_id: str,
+    *,
+    batch_size: int,
+    q_lengths: list[int],
+    kv_lengths: list[int],
+    num_qo_heads: int,
+    num_kv_heads: int,
+    head_dim: int,
+    calibration: PrimitiveCalibration,
+    hardware: HardwareConfig,
+    attention_type: str = "fa3_ragged",
+    causal: bool = True,
+    stream_id: str = "stream-0",
+    element_bytes: int = 2,
+) -> list[Event]:
+    """Lower FlashAttention into task-level DES events.
+
+    Design:
+    - Reuses existing FA2/FA3 schedulers for task-to-SM assignment
+    - Each task = one (request, q_tile, head) work unit
+    - Per-SM: tasks execute sequentially (persistent kernel)
+    - Compute and memory are modeled as parallel paths (roofline)
+    - Makespan = max(total_DRAM_time, max_SM_compute_chain)
+
+    Memory model:
+    - Single chip-level DRAM event with total unique bytes (Q+K+V+O)
+    - GQA-aware: K/V uses num_kv_heads, Q/O uses num_qo_heads
+
+    Compute model:
+    - Per-SM MMA compute chains (tensor_core lanes, per-SM rate)
+    - MMA dominates XU by ~248x; XU safely omitted for roofline bound
+    """
+
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    if len(q_lengths) != batch_size or len(kv_lengths) != batch_size:
+        raise ValueError("q_lengths and kv_lengths must have length batch_size")
+    if num_qo_heads <= 0 or num_kv_heads <= 0 or head_dim <= 0:
+        raise ValueError("num_qo_heads, num_kv_heads, head_dim must be positive")
+    _positive_integer("element_bytes", element_bytes)
+
+    fa = _import_fa_schedulers()
+
+    # Step 1: Determine tile sizes and run FA scheduler
+    is_fa3 = "fa3" in attention_type
+    layout = "paged" if "paged" in attention_type else "ragged"
+
+    if is_fa3:
+        cta_q, cta_kv = fa["FA3GetCTATileSize"](head_dim, head_dim, layout, causal)
+
+        # Determine same_schedule_for_all_heads threshold
+        total_q_tiles = sum(ceil_div(q, cta_q) for q in q_lengths)
+        max_num_works_per_head = total_q_tiles * batch_size
+        same_schedule = max_num_works_per_head > 8192
+
+        sm_task_iterations = fa["fa3_scheduler"](
+            batch_size=batch_size,
+            q_lengths=q_lengths,
+            kv_lengths=kv_lengths,
+            num_sm=hardware.num_sms,
+            cta_tile_q=cta_q,
+            cta_tile_kv=cta_kv,
+            causal=causal,
+            num_qo_heads=num_qo_heads,
+            same_schedule_for_all_heads=same_schedule,
+        )
+
+        head_multiplier = num_qo_heads if same_schedule else 1
+    else:
+        # FA2 path
+        avg_q = sum(q_lengths) // batch_size
+        gqa_group_size = num_qo_heads // num_kv_heads
+        cta_q = fa["FA2DetermineCtaTileQ"](avg_q * gqa_group_size, head_dim)
+        cta_kv = 64
+
+        kv_chunk_size = fa["PrefillBinarySearchKVChunkSize"](
+            max(kv_lengths), batch_size, hardware.num_sms, cta_q
+        )
+
+        cta_workload = fa["create_fa2_cta_workload"](
+            q_lengths, kv_lengths, num_kv_heads, causal,
+            cta_q, cta_kv, gqa_group_size, kv_chunk_size
+        )
+
+        scheduler_obj = fa["fa2_scheduler_cls"](hardware.num_sms, max_ctas_per_sm=2)
+        sm_task_iterations = scheduler_obj.schedule_ctas(cta_workload)
+        head_multiplier = 1
+
+    # Step 2: Emit events
+    launch_id = f"{kernel_id}:launch"
+    events: list[Event] = [
+        _event(
+            launch_id,
+            "KernelLaunch",
+            kernel_id,
+            stream_id,
+            "launch",
+            calibration,
+            stream_ordered=True,
+        )
+    ]
+
+    # Chip-level DRAM event: total unique bytes (Q + K + V + O)
+    total_kv_bytes = sum(kv_lengths) * num_kv_heads * head_dim * 2 * element_bytes
+    total_q_bytes = sum(q_lengths) * num_qo_heads * head_dim * element_bytes
+    total_o_bytes = sum(q_lengths) * num_qo_heads * head_dim * element_bytes
+    total_unique_dram = total_kv_bytes + total_q_bytes + total_o_bytes
+
+    dram_event_id = f"{kernel_id}:dram-total"
+    events.append(
+        _event(
+            dram_event_id,
+            "GlobalLoad_L2Miss",
+            kernel_id,
+            stream_id,
+            "dram_bandwidth",
+            calibration,
+            quantity=total_unique_dram,
+            dependencies=(launch_id,),
+            bytes=total_unique_dram,
+        )
+    )
+
+    # Per-SM task chains (compute only, on tensor_core lanes)
+    all_last_sync_ids: list[str] = []
+
+    for sm_idx, task_iterations in enumerate(sm_task_iterations):
+        if not task_iterations:
+            continue
+
+        prev_sync_id = launch_id
+
+        for task_idx, iterations in enumerate(task_iterations):
+            if iterations <= 0:
+                continue
+
+            effective_iterations = iterations * head_multiplier
+            task_prefix = f"{kernel_id}:sm{sm_idx}:t{task_idx}"
+
+            # MMA ops: 4 * cta_q * cta_kv * head_dim * iterations
+            # (Q@K^T = 2*cta_q*cta_kv*head_dim, P@V = 2*cta_q*cta_kv*head_dim)
+            mma_ops = 4 * cta_q * cta_kv * head_dim * effective_iterations
+            mma_instructions = ceil_div(mma_ops, 256)
+
+            compute_id = f"{task_prefix}:compute"
+            events.append(
+                _event(
+                    compute_id,
+                    "FA_Compute",
+                    kernel_id,
+                    stream_id,
+                    "tensor_core",
+                    calibration,
+                    quantity=mma_instructions,
+                    cta_id=task_prefix,
+                    dependencies=(prev_sync_id,),
+                    instruction_count=mma_instructions,
+                )
+            )
+
+            sync_id = f"{task_prefix}:sync"
+            events.append(
+                _event(
+                    sync_id,
+                    "FA_TaskSync",
+                    kernel_id,
+                    stream_id,
+                    "launch",
+                    calibration,
+                    cta_id=task_prefix,
+                    dependencies=(compute_id,),
+                )
+            )
+
+            prev_sync_id = sync_id
+
+        all_last_sync_ids.append(prev_sync_id)
+
+    # Kernel completion: depends on all SM chains + DRAM event
+    events.append(
+        _event(
+            f"{kernel_id}:complete",
+            "KernelComplete",
+            kernel_id,
+            stream_id,
+            "launch",
+            calibration,
+            dependencies=tuple(all_last_sync_ids) + (dram_event_id,),
+            stream_ordered=True,
+        )
+    )
+    return events

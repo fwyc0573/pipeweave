@@ -2,7 +2,7 @@
 
 from .events import EVENT_TYPES, Event
 from .hardware_adapter import HardwareConfig, derive_calibration, derive_resource_config, load_hardware_config
-from .operators import lower_gemm, lower_gemm_v2, lower_rmsnorm, lower_silu_and_mul
+from .operators import lower_flash_attention, lower_gemm, lower_gemm_v2, lower_rmsnorm, lower_silu_and_mul
 from .structural import (
     compute_actual_tile_dims,
     compute_l2_hit_ratio,
@@ -31,6 +31,7 @@ __all__ = [
     "derive_resource_config",
     "is_edge_tile",
     "load_hardware_config",
+    "lower_flash_attention",
     "lower_gemm",
     "lower_gemm_v2",
     "lower_rmsnorm",
