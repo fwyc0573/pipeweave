@@ -54,25 +54,34 @@ class HardwareConfig:
         return self.l2_cache_size_kb * 1024
 
     @property
-    def tc_bf16_ops_per_us(self) -> float:
-        """Tensor core BF16 operations per microsecond (chip-wide)."""
-        return self.tc_bf16 * 1e12 / 1e6  # TFLOPS -> FLOP/us
+    def tc_bf16_flops_per_sm_per_us(self) -> float:
+        """Per-SM tensor core BF16 throughput in FLOPs per microsecond.
+
+        tc_bf16 in hardware JSON = FLOPs per cycle per SM.
+        Multiply by SM clock frequency (MHz) to get FLOPs/us/SM.
+        """
+        return self.tc_bf16 * self.sm_freq_mhz
 
     @property
-    def tc_bf16_mma_per_us(self) -> float:
-        """Tensor core MMA instructions per microsecond (chip-wide).
-        Each MMA instruction computes 256 FLOPs (16x16x1 warp-level)."""
-        return self.tc_bf16_ops_per_us / 256.0
+    def tc_bf16_flops_per_us(self) -> float:
+        """Chip-wide tensor core BF16 throughput in FLOPs per microsecond."""
+        return self.tc_bf16_flops_per_sm_per_us * self.num_sms
 
     @property
-    def fma_fp32_ops_per_us(self) -> float:
-        """FMA FP32 operations per microsecond (chip-wide)."""
-        return self.fma_fp32 * 1e12 / 1e6
+    def fma_fp32_ops_per_sm_per_us(self) -> float:
+        """Per-SM FMA FP32 throughput in ops per microsecond.
+
+        fma_fp32 in hardware JSON = ops per cycle per SM.
+        """
+        return self.fma_fp32 * self.sm_freq_mhz
 
     @property
-    def xu_fp32_ops_per_us(self) -> float:
-        """XU (special function) FP32 operations per microsecond (chip-wide)."""
-        return self.xu_fp32 * 1e12 / 1e6
+    def xu_fp32_ops_per_sm_per_us(self) -> float:
+        """Per-SM XU (special function) throughput in ops per microsecond.
+
+        xu_fp32 in hardware JSON = ops per cycle per SM.
+        """
+        return self.xu_fp32 * self.sm_freq_mhz
 
 
 def load_hardware_config(json_path: str | Path) -> HardwareConfig:
@@ -155,30 +164,33 @@ def derive_calibration(hw: HardwareConfig) -> PrimitiveCalibration:
 
     Memory bandwidth model: DRAM and L2 bandwidth are CHIP-WIDE shared resources.
     The calibration gives duration per byte at CHIP-WIDE peak rate.
-    The ResourceConfig uses a SINGLE lane for each bandwidth pool, so the
-    scheduler naturally serializes all memory events into a total bandwidth
-    bottleneck. This is the correct roofline model: total_bytes / peak_BW.
+    The ResourceConfig uses a SINGLE lane for DRAM, so the scheduler naturally
+    serializes all DRAM events into a total bandwidth bottleneck.
 
     Compute model: Tensor cores are PER-SM resources (one lane per SM in
     ResourceConfig). Each CTA's compute duration = work / per_SM_rate.
     The scheduler places CTA compute events on SM lanes, expressing parallelism.
 
-    For bound validity: peak rates give minimum achievable time.
-    """
-    num_sms = hw.num_sms
+    Unit convention:
+    - tc_bf16/fma_fp32/xu_fp32 in hardware JSON = ops per cycle per SM
+    - Per-SM throughput = ops_per_cycle × sm_freq_mhz = ops/us per SM
+    - MMA instruction = 256 FLOPs (matches aggregator.py convention)
+    - MMA count = 2*M*N*K / 256 (flops = 2*M*N*K, 256 FLOPs per MMA)
 
+    For bound validity: peak rates give MINIMUM achievable time (most ideal).
+    Guarantee: DES_time ≤ actual_time.
+    """
     # Memory: CHIP-WIDE bandwidth (single shared pool)
     dram_us_per_byte = 1.0 / hw.mem_bandwidth_bytes_per_us
     l2_us_per_byte = 1.0 / hw.l2_bandwidth_bytes_per_us
 
-    # Compute: PER-SM throughput (each SM has its own TC pipeline)
-    tc_bf16_mma_per_sm_per_us = hw.tc_bf16_mma_per_us / num_sms
-    fma_per_sm_per_us = hw.fma_fp32_ops_per_us / num_sms
-    xu_per_sm_per_us = hw.xu_fp32_ops_per_us / num_sms
+    # Compute: PER-SM throughput
+    # MMA: each instruction = 256 FLOPs, rate = tc_bf16 × sm_freq / 256 instrs/us/SM
+    mma_instrs_per_sm_per_us = hw.tc_bf16_flops_per_sm_per_us / 256.0
+    mma_us_per_instr = 1.0 / mma_instrs_per_sm_per_us if mma_instrs_per_sm_per_us > 0 else 0.0
 
-    mma_us_per_instr = 1.0 / tc_bf16_mma_per_sm_per_us if tc_bf16_mma_per_sm_per_us > 0 else 0.0
-    fma_us_per_op = 1.0 / fma_per_sm_per_us if fma_per_sm_per_us > 0 else 0.0
-    xu_us_per_op = 1.0 / xu_per_sm_per_us if xu_per_sm_per_us > 0 else 0.0
+    fma_us_per_op = 1.0 / hw.fma_fp32_ops_per_sm_per_us if hw.fma_fp32_ops_per_sm_per_us > 0 else 0.0
+    xu_us_per_op = 1.0 / hw.xu_fp32_ops_per_sm_per_us if hw.xu_fp32_ops_per_sm_per_us > 0 else 0.0
 
     # Fixed overheads: zero for pure roofline bound (these are real but not
     # part of the compute/memory roofline). Setting to zero ensures the bound
@@ -186,7 +198,7 @@ def derive_calibration(hw: HardwareConfig) -> PrimitiveCalibration:
     kernel_launch_us = 0.0
     kernel_complete_us = 0.0
     cta_admission_us = 0.0
-    barrier_us = 0.02
+    barrier_us = 0.0
 
     return PrimitiveCalibration(
         {

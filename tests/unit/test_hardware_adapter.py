@@ -61,8 +61,10 @@ def test_hardware_config_derived_properties(h100_json):
     assert hw.mem_bandwidth_bytes_per_us == pytest.approx(3352.32e3, rel=1e-3)
     assert hw.l2_bandwidth_bytes_per_us == pytest.approx(8820e3, rel=1e-3)
     assert hw.l2_cache_size_bytes == 51200 * 1024
-    assert hw.tc_bf16_ops_per_us == pytest.approx(4096e6, rel=1e-3)
-    assert hw.tc_bf16_mma_per_us == pytest.approx(4096e6 / 256, rel=1e-3)
+    # tc_bf16=4096 ops/cycle/SM, sm_freq=1830 MHz → 7,495,680 FLOPs/us/SM
+    assert hw.tc_bf16_flops_per_sm_per_us == pytest.approx(4096 * 1830, rel=1e-3)
+    # Chip-wide: 7,495,680 × 132 = 989,429,760 FLOPs/us ≈ 989.4 TFLOPS
+    assert hw.tc_bf16_flops_per_us == pytest.approx(4096 * 1830 * 132, rel=1e-3)
 
 
 def test_derive_calibration_produces_valid_entries(h100_json):

@@ -67,18 +67,20 @@ class TestGemmV2WaveSplit:
         assert tail_count == 0
 
 
-class TestGemmV2L2Split:
-    """Verify GlobalLoad events are split into L2Hit and L2Miss."""
+class TestGemmV2MemoryModel:
+    """Verify the chip-level DRAM event correctly models total unique traffic."""
 
-    def test_has_both_l2_types(self, h100_hw, h100_cal, h100_rc):
+    def test_has_chip_level_dram_event(self, h100_hw, h100_cal, h100_rc):
         events = lower_gemm_v2(
-            "gemm-l2", m=4096, n=4096, k=4096,
+            "gemm-dram", m=4096, n=4096, k=4096,
             tile_m=128, tile_n=128, calibration=h100_cal, hardware=h100_hw,
         )
-        l2_hit_count = sum(1 for e in events if e.event_type == "GlobalLoad_L2Hit")
-        l2_miss_count = sum(1 for e in events if e.event_type == "GlobalLoad_L2Miss")
-        assert l2_hit_count > 0
-        assert l2_miss_count > 0
+        dram_events = [e for e in events if e.event_type == "GlobalLoad_L2Miss"]
+        # Single chip-level DRAM event (not per-CTA)
+        assert len(dram_events) == 1
+        # Total unique bytes = (M*K + N*K + M*N) * element_bytes
+        expected_bytes = (4096 * 4096 + 4096 * 4096 + 4096 * 4096) * 2
+        assert dram_events[0].bytes == expected_bytes
 
     def test_l2_miss_reflects_cross_cta_sharing(self, h100_hw, h100_cal, h100_rc):
         m, n, k, tile_m, tile_n = 256, 256, 512, 128, 128
@@ -88,28 +90,23 @@ class TestGemmV2L2Split:
             tile_m=tile_m, tile_n=tile_n,
             calibration=h100_cal, hardware=h100_hw, element_bytes=element_bytes,
         )
-        l2_hit_bytes = sum(e.bytes for e in events if e.event_type == "GlobalLoad_L2Hit")
-        l2_miss_bytes = sum(e.bytes for e in events if e.event_type == "GlobalLoad_L2Miss")
-        # With cross-CTA sharing, DRAM miss bytes should be LESS than total load
-        # For 2x2 grid: A shared across n_tiles=2, B shared across m_tiles=2
-        # Each CTA's DRAM: A_unique = (128*512*2)/2 + B_unique = (128*512*2)/2 = 131072
-        # Total DRAM = 4 * 131072 = 524288
-        total_load = 4 * (128 * 512 + 128 * 512) * element_bytes  # 1048576
-        assert l2_miss_bytes < total_load
-        assert l2_miss_bytes > 0
-        assert l2_hit_bytes >= 0
+        dram_events = [e for e in events if e.event_type == "GlobalLoad_L2Miss"]
+        assert len(dram_events) == 1
+        # Total unique = (M*K + N*K + M*N) * 2 = (256*512 + 256*512 + 256*256) * 2
+        expected = (m * k + n * k + m * n) * element_bytes
+        assert dram_events[0].bytes == expected
 
-    def test_small_working_set_mostly_l2_hit(self, h100_hw, h100_cal, h100_rc):
-        # Small K → small working set → high L2 hit ratio
+    def test_small_working_set_dram_is_small(self, h100_hw, h100_cal, h100_rc):
+        # Small K → small total DRAM traffic
         events = lower_gemm_v2(
             "gemm-small-k", m=4096, n=4096, k=64,
             tile_m=128, tile_n=128, calibration=h100_cal, hardware=h100_hw,
         )
-        l2_hit_bytes = sum(e.bytes for e in events if e.event_type == "GlobalLoad_L2Hit")
-        l2_miss_bytes = sum(e.bytes for e in events if e.event_type == "GlobalLoad_L2Miss")
-        # With small K, working set per CTA = (128*64+128*64)*2 = 32KB
-        # L2 per CTA = 50MB/132 ~ 388KB >> 32KB → high hit ratio
-        assert l2_hit_bytes > l2_miss_bytes
+        dram_events = [e for e in events if e.event_type == "GlobalLoad_L2Miss"]
+        assert len(dram_events) == 1
+        # (4096*64 + 4096*64 + 4096*4096)*2 — output dominates for small K
+        expected = (4096 * 64 + 4096 * 64 + 4096 * 4096) * 2
+        assert dram_events[0].bytes == expected
 
 
 class TestGemmV2TileSplit:

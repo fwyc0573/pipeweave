@@ -438,6 +438,27 @@ def lower_gemm_v2(
             stream_ordered=True,
         )
     ]
+
+    # Chip-level DRAM event: total unique bytes loaded AND stored from/to HBM.
+    # This is a single event on the shared DRAM bandwidth resource.
+    # For the roofline lower bound: DRAM time = total_unique_bytes / peak_BW.
+    # Includes: A matrix (M×K), B matrix (N×K), and C output (M×N).
+    total_unique_dram_bytes = (m * k + n * k + m * n) * element_bytes
+    dram_event_id = f"{kernel_id}:dram-total"
+    events.append(
+        _event(
+            dram_event_id,
+            "GlobalLoad_L2Miss",
+            kernel_id,
+            stream_id,
+            "dram_bandwidth",
+            calibration,
+            quantity=total_unique_dram_bytes,
+            dependencies=(launch_id,),
+            bytes=total_unique_dram_bytes,
+        )
+    )
+
     stores: list[str] = []
 
     for cta_index in range(total_ctas):
@@ -463,69 +484,7 @@ def lower_gemm_v2(
             )
         )
 
-        # 2. Memory loads — roofline memory model
-        #    For a valid lower bound, the key insight is:
-        #    - Per-CTA memory access is overlapped with compute (pipeline)
-        #    - The chip-wide DRAM bottleneck is: total_unique_bytes / peak_BW
-        #    - Per-CTA, we model the memory demand as this CTA's share of
-        #      the total unique DRAM traffic, using the lower of:
-        #      (a) full per-CTA load (pessimistic, no sharing)
-        #      (b) chip-wide unique / total_CTAs (optimistic, perfect sharing)
-        #    We use (b) for a valid lower bound — each CTA's DRAM event
-        #    represents its proportional share of the chip-wide memory cost.
-        #
-        #    Total unique DRAM for entire GEMM = (M*K + N*K) * element_bytes
-        #    Per CTA share = total_unique / total_ctas
-        total_unique_bytes = (m * k + n * k) * element_bytes
-        per_cta_dram_share = total_unique_bytes // total_ctas
-
-        # L2 hit portion: any bytes beyond the DRAM share (served from cache)
-        total_cta_load = (actual_m * k + actual_n * k) * element_bytes
-        l2_hit_bytes = max(0, total_cta_load - per_cta_dram_share)
-        l2_miss_bytes = min(per_cta_dram_share, total_cta_load)
-
-        load_event_ids: list[str] = []
-
-        if l2_hit_bytes > 0:
-            l2_hit_id = f"{cta_id}:load-l2hit"
-            events.append(
-                _event(
-                    l2_hit_id,
-                    "GlobalLoad_L2Hit",
-                    kernel_id,
-                    stream_id,
-                    "l2_bandwidth",
-                    calibration,
-                    quantity=l2_hit_bytes,
-                    cta_id=cta_id,
-                    dependencies=(admission_id,),
-                    bytes=l2_hit_bytes,
-                )
-            )
-            load_event_ids.append(l2_hit_id)
-
-        if l2_miss_bytes > 0:
-            l2_miss_id = f"{cta_id}:load-l2miss"
-            events.append(
-                _event(
-                    l2_miss_id,
-                    "GlobalLoad_L2Miss",
-                    kernel_id,
-                    stream_id,
-                    "dram_bandwidth",
-                    calibration,
-                    quantity=l2_miss_bytes,
-                    cta_id=cta_id,
-                    dependencies=(admission_id,),
-                    bytes=l2_miss_bytes,
-                )
-            )
-            load_event_ids.append(l2_miss_id)
-
-        # 3. MMA (tile-aware) — runs in PARALLEL with memory loads
-        #    This models the K-iteration double-buffering pipeline overlap:
-        #    in steady state, load[k+1] overlaps with compute[k].
-        #    For the roofline lower bound, CTA time = max(load_time, compute_time).
+        # 2. MMA (tile-aware) — the per-SM compute work
         #    MMA instructions: 2*M*N*K FLOPs / 256 FLOPs-per-instruction
         mma_type = "MMA_PartialTile" if is_partial else "MMA_FullTile"
         mma_instructions = ceil_div(2 * actual_m * actual_n * k, 256)
@@ -545,28 +504,28 @@ def lower_gemm_v2(
             )
         )
 
-        # 4. Store — depends on BOTH load and MMA completing (join point)
-        #    This gives CTA duration = max(load_time, compute_time) + store_time
+        # 3. Store — depends on MMA completing. Uses L2 writeback path
+        #    (not the chip-level DRAM lane; output bytes already counted there).
         store_bytes = actual_m * actual_n * element_bytes
         store_id = f"{cta_id}:store"
-        store_deps = tuple(load_event_ids + [mma_id]) if load_event_ids else (mma_id,)
         events.append(
             _event(
                 store_id,
                 "GlobalStore",
                 kernel_id,
                 stream_id,
-                "dram_bandwidth",
+                "l2_bandwidth",
                 calibration,
                 quantity=store_bytes,
                 cta_id=cta_id,
-                dependencies=store_deps,
+                dependencies=(mma_id,),
                 bytes=store_bytes,
             )
         )
         stores.append(store_id)
 
-    # Kernel completion
+    # Kernel completion — depends on all stores AND the chip-level DRAM event.
+    # Makespan = max(total_DRAM_time, total_compute_time + store_time)
     events.append(
         _event(
             f"{kernel_id}:complete",
@@ -575,7 +534,7 @@ def lower_gemm_v2(
             stream_id,
             "launch",
             calibration,
-            dependencies=tuple(stores),
+            dependencies=tuple(stores) + (dram_event_id,),
             stream_ordered=True,
         )
     )
