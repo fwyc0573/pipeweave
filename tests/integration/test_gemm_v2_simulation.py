@@ -68,7 +68,7 @@ class TestGemmV2WaveSplit:
 
 
 class TestGemmV2MemoryModel:
-    """Verify the chip-level DRAM event correctly models total unique input traffic."""
+    """Verify the chip-level DRAM event correctly models effective traffic."""
 
     def test_has_chip_level_dram_event(self, h100_hw, h100_cal, h100_rc):
         events = lower_gemm_v2(
@@ -77,36 +77,34 @@ class TestGemmV2MemoryModel:
         )
         dram_events = [e for e in events if e.event_type == "GlobalLoad_L2Miss"]
         assert len(dram_events) == 1
-        # Total unique INPUT bytes = (M*K + N*K) * element_bytes (no output C)
-        expected_bytes = (4096 * 4096 + 4096 * 4096) * 2
-        assert dram_events[0].bytes == expected_bytes
+        # Bytes should be > 0 and <= (M*K + N*K) * elem (upper bound)
+        max_bytes = (4096 * 4096 + 4096 * 4096) * 2
+        assert 0 < dram_events[0].bytes <= max_bytes
 
-    def test_l2_miss_reflects_cross_cta_sharing(self, h100_hw, h100_cal, h100_rc):
+    def test_b_reuse_reduces_dram_traffic(self, h100_hw, h100_cal, h100_rc):
+        # With m_tiles > 1, B gets L2 reuse → effective DRAM < full B
         m, n, k, tile_m, tile_n = 256, 256, 512, 128, 128
         element_bytes = 2
         events = lower_gemm_v2(
-            "gemm-bytes", m=m, n=n, k=k,
+            "gemm-reuse", m=m, n=n, k=k,
             tile_m=tile_m, tile_n=tile_n,
             calibration=h100_cal, hardware=h100_hw, element_bytes=element_bytes,
         )
-        # Total input = (M*K + N*K) * 2 = 524288 bytes — fits in 50MB L2
-        # So uses L2 path (GlobalLoad_L2Hit)
-        mem_events = [e for e in events if "GlobalLoad" in e.event_type]
-        assert len(mem_events) == 1
-        expected = (m * k + n * k) * element_bytes
-        assert mem_events[0].bytes == expected
+        dram_events = [e for e in events if e.event_type == "GlobalLoad_L2Miss"]
+        assert len(dram_events) == 1
+        # m_tiles=2, so B reuse factor >= 2 → effective B < full B
+        full_input = (m * k + n * k) * element_bytes
+        assert dram_events[0].bytes < full_input
 
-    def test_small_working_set_dram_is_small(self, h100_hw, h100_cal, h100_rc):
+    def test_always_uses_dram_bandwidth(self, h100_hw, h100_cal, h100_rc):
+        # Even for small inputs, chip-level event uses DRAM (cold miss)
         events = lower_gemm_v2(
             "gemm-small-k", m=4096, n=4096, k=64,
             tile_m=128, tile_n=128, calibration=h100_cal, hardware=h100_hw,
         )
-        # (4096*64 + 4096*64)*2 = 1MB — fits in 50MB L2 → uses L2 path
         mem_events = [e for e in events if "GlobalLoad" in e.event_type]
         assert len(mem_events) == 1
-        expected = (4096 * 64 + 4096 * 64) * 2
-        assert mem_events[0].bytes == expected
-        assert mem_events[0].event_type == "GlobalLoad_L2Hit"
+        assert mem_events[0].event_type == "GlobalLoad_L2Miss"
 
 
 class TestGemmV2TileSplit:

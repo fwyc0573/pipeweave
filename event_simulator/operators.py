@@ -439,45 +439,42 @@ def lower_gemm_v2(
         )
     ]
 
-    # Chip-level memory event: total unique INPUT bytes (A + B matrices).
+    # Chip-level memory event: effective DRAM traffic accounting for L2 reuse.
     # Output C excluded (L2 writeback, not on critical path).
     #
-    # For the roofline lower bound, use the FASTEST possible path:
-    # - If total input fits in L2 → use L2 bandwidth (faster, more ideal)
-    # - Otherwise → use DRAM bandwidth
-    # This ensures DES_time ≤ actual_time even when L2 caching helps.
-    total_unique_input_bytes = (m * k + n * k) * element_bytes
+    # DRAM traffic model:
+    # - A matrix (M×K): loaded once from DRAM (unique, no reuse across CTAs)
+    # - B matrix (N×K): each tile-column is reused by m_tiles CTA-rows.
+    #   If a B tile-column fits in L2, only the first access goes to DRAM;
+    #   subsequent CTA-rows hit L2. Effective DRAM for B = N×K / reuse_factor.
+    #   reuse_factor = min(m_tiles, effective_L2 / b_column_bytes).
+    #   For valid lower bound: use maximum feasible reuse (most optimistic).
+    a_bytes = m * k * element_bytes
+    b_bytes = n * k * element_bytes
+    b_tile_col_bytes = tile_n * k * element_bytes
+    # How many CTA-rows can reuse the same B tile-column from L2?
+    # Limited by: L2 size / (b_tile_col + working data of concurrent CTAs)
+    b_reuse_factor = min(
+        m_tiles,
+        max(1, hardware.l2_cache_size_bytes // max(1, b_tile_col_bytes))
+    )
+    effective_b_dram = b_bytes // b_reuse_factor
+    total_effective_dram_bytes = a_bytes + effective_b_dram
 
-    if total_unique_input_bytes <= hardware.l2_cache_size_bytes:
-        dram_event_id = f"{kernel_id}:mem-total"
-        events.append(
-            _event(
-                dram_event_id,
-                "GlobalLoad_L2Hit",
-                kernel_id,
-                stream_id,
-                "l2_bandwidth",
-                calibration,
-                quantity=total_unique_input_bytes,
-                dependencies=(launch_id,),
-                bytes=total_unique_input_bytes,
-            )
+    dram_event_id = f"{kernel_id}:mem-total"
+    events.append(
+        _event(
+            dram_event_id,
+            "GlobalLoad_L2Miss",
+            kernel_id,
+            stream_id,
+            "dram_bandwidth",
+            calibration,
+            quantity=total_effective_dram_bytes,
+            dependencies=(launch_id,),
+            bytes=total_effective_dram_bytes,
         )
-    else:
-        dram_event_id = f"{kernel_id}:mem-total"
-        events.append(
-            _event(
-                dram_event_id,
-                "GlobalLoad_L2Miss",
-                kernel_id,
-                stream_id,
-                "dram_bandwidth",
-                calibration,
-                quantity=total_unique_input_bytes,
-                dependencies=(launch_id,),
-                bytes=total_unique_input_bytes,
-            )
-        )
+    )
 
     stores: list[str] = []
 
