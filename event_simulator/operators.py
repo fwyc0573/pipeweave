@@ -384,16 +384,23 @@ def lower_gemm_v2(
     stream_id: str = "stream-0",
     element_bytes: int = 2,
     max_ctas_per_sm: int = 1,
+    tile_k: int = 0,
 ) -> list[Event]:
     """Lower a tiled GEMM with structural decomposition.
 
     Compared to lower_gemm, this version models:
-    - L2 cache hit/miss split for memory loads
+    - L2 cache hit/miss split for memory loads (using tile_K working set)
     - Full-wave vs tail-wave CTA admission
     - Full vs partial tile MMA efficiency
+    - Pipeline overlap: load and compute run in parallel
 
     The resulting event DAG produces a tighter lower bound on execution
     time by capturing these structural effects explicitly.
+
+    The tile_k parameter controls L2 working set estimation. When tile_k > 0,
+    the live working set per CTA is (tile_m*tile_k + tile_n*tile_k) bytes
+    (only one K-iteration's data is live at a time due to double-buffering).
+    When tile_k == 0 (default), falls back to using full K dimension.
     """
 
     for name, value in (
@@ -406,6 +413,8 @@ def lower_gemm_v2(
         ("max_ctas_per_sm", max_ctas_per_sm),
     ):
         _positive_integer(name, value)
+    if tile_k < 0:
+        raise ValueError("tile_k must be non-negative")
 
     m_tiles = ceil_div(m, tile_m)
     n_tiles = ceil_div(n, tile_n)
@@ -416,8 +425,11 @@ def lower_gemm_v2(
         total_ctas, hardware.num_sms, max_ctas_per_sm
     )
 
-    # L2 hit ratio depends on wave context (fewer concurrent CTAs in tail = more L2 per CTA)
-    working_set_per_cta = (tile_m * k + tile_n * k) * element_bytes
+    # L2 hit ratio: use tile_K-based working set if available.
+    # The "live" data at any moment is one K-iteration of A and B panels.
+    # With double-buffering, this fits in L2 for typical tile sizes.
+    effective_tile_k = tile_k if tile_k > 0 else k
+    working_set_per_cta = (tile_m * effective_tile_k + tile_n * effective_tile_k) * element_bytes
     concurrent_full = min(total_ctas, hardware.num_sms * max_ctas_per_sm)
     concurrent_tail = tail_wave_ctas if tail_wave_ctas > 0 else concurrent_full
     l2_hit_full = compute_l2_hit_ratio(
@@ -466,12 +478,26 @@ def lower_gemm_v2(
             )
         )
 
-        # 2. Memory loads — split into L2 hit and L2 miss portions
-        #    Loads run in PARALLEL with compute (pipeline overlap).
-        #    Both depend on admission; store depends on BOTH completing.
-        load_bytes = (actual_m * k + actual_n * k) * element_bytes
-        l2_hit_bytes = int(load_bytes * l2_hit)
-        l2_miss_bytes = load_bytes - l2_hit_bytes
+        # 2. Memory loads — roofline memory model
+        #    For a valid lower bound, the key insight is:
+        #    - Per-CTA memory access is overlapped with compute (pipeline)
+        #    - The chip-wide DRAM bottleneck is: total_unique_bytes / peak_BW
+        #    - Per-CTA, we model the memory demand as this CTA's share of
+        #      the total unique DRAM traffic, using the lower of:
+        #      (a) full per-CTA load (pessimistic, no sharing)
+        #      (b) chip-wide unique / total_CTAs (optimistic, perfect sharing)
+        #    We use (b) for a valid lower bound — each CTA's DRAM event
+        #    represents its proportional share of the chip-wide memory cost.
+        #
+        #    Total unique DRAM for entire GEMM = (M*K + N*K) * element_bytes
+        #    Per CTA share = total_unique / total_ctas
+        total_unique_bytes = (m * k + n * k) * element_bytes
+        per_cta_dram_share = total_unique_bytes // total_ctas
+
+        # L2 hit portion: any bytes beyond the DRAM share (served from cache)
+        total_cta_load = (actual_m * k + actual_n * k) * element_bytes
+        l2_hit_bytes = max(0, total_cta_load - per_cta_dram_share)
+        l2_miss_bytes = min(per_cta_dram_share, total_cta_load)
 
         load_event_ids: list[str] = []
 
