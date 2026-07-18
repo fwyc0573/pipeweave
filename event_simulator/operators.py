@@ -425,20 +425,6 @@ def lower_gemm_v2(
         total_ctas, hardware.num_sms, max_ctas_per_sm
     )
 
-    # L2 hit ratio: use tile_K-based working set if available.
-    # The "live" data at any moment is one K-iteration of A and B panels.
-    # With double-buffering, this fits in L2 for typical tile sizes.
-    effective_tile_k = tile_k if tile_k > 0 else k
-    working_set_per_cta = (tile_m * effective_tile_k + tile_n * effective_tile_k) * element_bytes
-    concurrent_full = min(total_ctas, hardware.num_sms * max_ctas_per_sm)
-    concurrent_tail = tail_wave_ctas if tail_wave_ctas > 0 else concurrent_full
-    l2_hit_full = compute_l2_hit_ratio(
-        working_set_per_cta, hardware.l2_cache_size_bytes, concurrent_full
-    )
-    l2_hit_tail = compute_l2_hit_ratio(
-        working_set_per_cta, hardware.l2_cache_size_bytes, concurrent_tail
-    )
-
     # Emit events
     launch_id = f"{kernel_id}:launch"
     events: list[Event] = [
@@ -458,7 +444,6 @@ def lower_gemm_v2(
         cta_id = f"{kernel_id}:cta-{cta_index}"
         is_tail = cta_index >= full_wave_ctas
         is_partial = is_edge_tile(cta_index, m_tiles, n_tiles, m, n, tile_m, tile_n)
-        l2_hit = l2_hit_tail if is_tail else l2_hit_full
 
         actual_m, actual_n = compute_actual_tile_dims(cta_index, m, n, tile_m, tile_n, n_tiles)
 
@@ -541,8 +526,9 @@ def lower_gemm_v2(
         #    This models the K-iteration double-buffering pipeline overlap:
         #    in steady state, load[k+1] overlaps with compute[k].
         #    For the roofline lower bound, CTA time = max(load_time, compute_time).
+        #    MMA instructions: 2*M*N*K FLOPs / 256 FLOPs-per-instruction
         mma_type = "MMA_PartialTile" if is_partial else "MMA_FullTile"
-        mma_instructions = ceil_div(actual_m * actual_n * k, 256)
+        mma_instructions = ceil_div(2 * actual_m * actual_n * k, 256)
         mma_id = f"{cta_id}:mma"
         events.append(
             _event(

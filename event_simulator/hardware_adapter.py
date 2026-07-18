@@ -120,7 +120,7 @@ def derive_resource_config(
                 "sm": hw.num_sms,
                 "tensor_core": hw.num_sms,
                 "dram_bandwidth": 1,
-                "l2_bandwidth": 1,
+                "l2_bandwidth": hw.num_sms,
                 "global_memory": 1,
                 "alu": hw.num_sms,
                 "sfu": hw.num_sms,
@@ -180,11 +180,12 @@ def derive_calibration(hw: HardwareConfig) -> PrimitiveCalibration:
     fma_us_per_op = 1.0 / fma_per_sm_per_us if fma_per_sm_per_us > 0 else 0.0
     xu_us_per_op = 1.0 / xu_per_sm_per_us if xu_per_sm_per_us > 0 else 0.0
 
-    # Fixed overheads — set to minimum achievable for valid lower bound
-    # These represent unavoidable fixed costs, calibrated at peak (fastest) rate
-    kernel_launch_us = 0.5
-    kernel_complete_us = 0.01
-    cta_admission_us = 0.005
+    # Fixed overheads: zero for pure roofline bound (these are real but not
+    # part of the compute/memory roofline). Setting to zero ensures the bound
+    # reflects only the structural compute and memory costs.
+    kernel_launch_us = 0.0
+    kernel_complete_us = 0.0
+    cta_admission_us = 0.0
     barrier_us = 0.02
 
     return PrimitiveCalibration(

@@ -96,6 +96,10 @@ def test_derive_calibration_physical_sanity(h100_json):
     # Per-SM TC = 4096 TFLOPS / 132 = 31 TFLOPS → 121M MMA-instr/s → ~8us per instr
     assert cal.duration_per_unit["MMA"] > 1e-7
 
+    # Fixed overheads are zero for pure roofline bound
+    assert cal.duration_per_unit["KernelLaunch"] == 0.0
+    assert cal.duration_per_unit["CTAAdmission"] == 0.0
+
 
 def test_derive_resource_config_gemm(h100_json):
     hw = load_hardware_config(h100_json)
@@ -104,7 +108,7 @@ def test_derive_resource_config_gemm(h100_json):
     assert rc.capacities["sm"] == 132
     assert rc.capacities["tensor_core"] == 132
     assert rc.capacities["dram_bandwidth"] == 1  # chip-wide shared pool
-    assert rc.capacities["l2_bandwidth"] == 1    # chip-wide shared pool
+    assert rc.capacities["l2_bandwidth"] == 132  # per-SM parallel slices
 
 
 def test_derive_resource_config_flash_attention(h100_json):
