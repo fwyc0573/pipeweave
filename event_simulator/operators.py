@@ -439,25 +439,45 @@ def lower_gemm_v2(
         )
     ]
 
-    # Chip-level DRAM event: total unique bytes loaded AND stored from/to HBM.
-    # This is a single event on the shared DRAM bandwidth resource.
-    # For the roofline lower bound: DRAM time = total_unique_bytes / peak_BW.
-    # Includes: A matrix (M×K), B matrix (N×K), and C output (M×N).
-    total_unique_dram_bytes = (m * k + n * k + m * n) * element_bytes
-    dram_event_id = f"{kernel_id}:dram-total"
-    events.append(
-        _event(
-            dram_event_id,
-            "GlobalLoad_L2Miss",
-            kernel_id,
-            stream_id,
-            "dram_bandwidth",
-            calibration,
-            quantity=total_unique_dram_bytes,
-            dependencies=(launch_id,),
-            bytes=total_unique_dram_bytes,
+    # Chip-level memory event: total unique INPUT bytes (A + B matrices).
+    # Output C excluded (L2 writeback, not on critical path).
+    #
+    # For the roofline lower bound, use the FASTEST possible path:
+    # - If total input fits in L2 → use L2 bandwidth (faster, more ideal)
+    # - Otherwise → use DRAM bandwidth
+    # This ensures DES_time ≤ actual_time even when L2 caching helps.
+    total_unique_input_bytes = (m * k + n * k) * element_bytes
+
+    if total_unique_input_bytes <= hardware.l2_cache_size_bytes:
+        dram_event_id = f"{kernel_id}:mem-total"
+        events.append(
+            _event(
+                dram_event_id,
+                "GlobalLoad_L2Hit",
+                kernel_id,
+                stream_id,
+                "l2_bandwidth",
+                calibration,
+                quantity=total_unique_input_bytes,
+                dependencies=(launch_id,),
+                bytes=total_unique_input_bytes,
+            )
         )
-    )
+    else:
+        dram_event_id = f"{kernel_id}:mem-total"
+        events.append(
+            _event(
+                dram_event_id,
+                "GlobalLoad_L2Miss",
+                kernel_id,
+                stream_id,
+                "dram_bandwidth",
+                calibration,
+                quantity=total_unique_input_bytes,
+                dependencies=(launch_id,),
+                bytes=total_unique_input_bytes,
+            )
+        )
 
     stores: list[str] = []
 

@@ -68,7 +68,7 @@ class TestGemmV2WaveSplit:
 
 
 class TestGemmV2MemoryModel:
-    """Verify the chip-level DRAM event correctly models total unique traffic."""
+    """Verify the chip-level DRAM event correctly models total unique input traffic."""
 
     def test_has_chip_level_dram_event(self, h100_hw, h100_cal, h100_rc):
         events = lower_gemm_v2(
@@ -76,10 +76,9 @@ class TestGemmV2MemoryModel:
             tile_m=128, tile_n=128, calibration=h100_cal, hardware=h100_hw,
         )
         dram_events = [e for e in events if e.event_type == "GlobalLoad_L2Miss"]
-        # Single chip-level DRAM event (not per-CTA)
         assert len(dram_events) == 1
-        # Total unique bytes = (M*K + N*K + M*N) * element_bytes
-        expected_bytes = (4096 * 4096 + 4096 * 4096 + 4096 * 4096) * 2
+        # Total unique INPUT bytes = (M*K + N*K) * element_bytes (no output C)
+        expected_bytes = (4096 * 4096 + 4096 * 4096) * 2
         assert dram_events[0].bytes == expected_bytes
 
     def test_l2_miss_reflects_cross_cta_sharing(self, h100_hw, h100_cal, h100_rc):
@@ -90,23 +89,24 @@ class TestGemmV2MemoryModel:
             tile_m=tile_m, tile_n=tile_n,
             calibration=h100_cal, hardware=h100_hw, element_bytes=element_bytes,
         )
-        dram_events = [e for e in events if e.event_type == "GlobalLoad_L2Miss"]
-        assert len(dram_events) == 1
-        # Total unique = (M*K + N*K + M*N) * 2 = (256*512 + 256*512 + 256*256) * 2
-        expected = (m * k + n * k + m * n) * element_bytes
-        assert dram_events[0].bytes == expected
+        # Total input = (M*K + N*K) * 2 = 524288 bytes — fits in 50MB L2
+        # So uses L2 path (GlobalLoad_L2Hit)
+        mem_events = [e for e in events if "GlobalLoad" in e.event_type]
+        assert len(mem_events) == 1
+        expected = (m * k + n * k) * element_bytes
+        assert mem_events[0].bytes == expected
 
     def test_small_working_set_dram_is_small(self, h100_hw, h100_cal, h100_rc):
-        # Small K → small total DRAM traffic
         events = lower_gemm_v2(
             "gemm-small-k", m=4096, n=4096, k=64,
             tile_m=128, tile_n=128, calibration=h100_cal, hardware=h100_hw,
         )
-        dram_events = [e for e in events if e.event_type == "GlobalLoad_L2Miss"]
-        assert len(dram_events) == 1
-        # (4096*64 + 4096*64 + 4096*4096)*2 — output dominates for small K
-        expected = (4096 * 64 + 4096 * 64 + 4096 * 4096) * 2
-        assert dram_events[0].bytes == expected
+        # (4096*64 + 4096*64)*2 = 1MB — fits in 50MB L2 → uses L2 path
+        mem_events = [e for e in events if "GlobalLoad" in e.event_type]
+        assert len(mem_events) == 1
+        expected = (4096 * 64 + 4096 * 64) * 2
+        assert mem_events[0].bytes == expected
+        assert mem_events[0].event_type == "GlobalLoad_L2Hit"
 
 
 class TestGemmV2TileSplit:
@@ -160,7 +160,9 @@ class TestGemmV2Scheduling:
         report = build_report(result)
         assert report.makespan > 0
         assert report.resource_busy_time["tensor_core"] > 0
-        assert report.resource_busy_time["dram_bandwidth"] > 0
+        # Memory may use L2 or DRAM path depending on size
+        mem_busy = report.resource_busy_time.get("dram_bandwidth", 0) + report.resource_busy_time.get("l2_bandwidth", 0)
+        assert mem_busy > 0
         assert len(report.critical_path_event_ids) >= 3
 
     def test_dependencies_are_respected(self, h100_hw, h100_cal, h100_rc):
