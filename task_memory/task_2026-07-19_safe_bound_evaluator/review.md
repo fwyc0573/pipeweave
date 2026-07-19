@@ -6,6 +6,7 @@
 |---|---|
 | 2026-07-19 | Recorded the independent Claude design approval and baseline evidence; post-implementation review remains pending. |
 | 2026-07-19 | Recorded the independent post-implementation Claude approval and the non-blocking artifact-status watch. |
+| 2026-07-19 | Recorded clean branch delivery and local/remote commit equality. |
 
 ## Review Status
 
@@ -36,3 +37,12 @@
 - **Inspected Artifacts:** Parent checkpoint `a6b3e54dde74a6bac1e9ae3671c5f10412ad0856`, existing scheduler tests, and current Event/scheduler/resource implementations.
 - **Identified Issues/Anomalies:** The existing scheduler is intentionally order-dependent for the documented fixture; this is expected evidence, not a regression.
 - **Remediation/Verification Code Actions Taken:** Ran the exact fixture and full baseline suite without code changes: `long-first_makespan=21.0`, `short-first_makespan=11.0`; `131/131` tests passed in pytest `2.74s` (shell elapsed `3.201s`, user `4.948s`, system `0.156s`), exit `0`.
+
+
+## Review Entry — Branch Checkpoint Delivery
+
+- **Target Component/Phase:** Final branch checkpoint, explicit staged allowlist, remote synchronization, and task-record closure.
+- **Reviewer Agent Identity:** Primary /root delivery verification lane.
+- **Inspected Artifacts:** Staged path list, Lore commit 9f52c29, clean git status --short --branch, remote ref refs/heads/des, and the 15-entry checksum manifest.
+- **Identified Issues/Anomalies:** No delivery anomaly remained. The ignored historical =10.1 path was absent from the staged allowlist and was not part of any active operation.
+- **Remediation/Verification Code Actions Taken:** Pushed des to origin, verified local commit 9f52c29e583b53533ddd30fb43ab497ea60eda21 equals the remote ref, re-ran checksum verification, and closed the task status as complete.

@@ -6,6 +6,7 @@
 |---|---|
 | 2026-07-19 | Recorded the Claude design approval, parent baseline, and bounded implementation scope. |
 | 2026-07-19 | Completed the evaluator implementation, independent review, numeric validation, and artifact inventory. |
+| 2026-07-19 | Closed the branch checkpoint with commit, push, and local/remote equality evidence. |
 
 ## Task Overview
 
@@ -25,14 +26,14 @@ The following substantive deliverables have exact SHA-256 digests. The summary's
 | task_memory/task_2026-07-19_safe_bound_evaluator/requirements.md | 2532c45c947e133c9ff78f074bf4fdade0f8e0fa5be9a52c269caa62ffffe6e6 |
 | task_memory/task_2026-07-19_safe_bound_evaluator/design.md | 1d5de65afed8a2af921e22b22809ee4c8c53b6f5f4b2b156ac8e3eeb83774c25 |
 | task_memory/task_2026-07-19_safe_bound_evaluator/harness.md | 4e62d2436acd9dd11574c8b4594528e2b1da372c10b5c57dfe114e882eb43a33 |
-| task_memory/task_2026-07-19_safe_bound_evaluator/plan.md | de4105f26e8d8a43267669946b101eeb59a86768b8c21c4226b507cf5d6e13b2 |
+| task_memory/task_2026-07-19_safe_bound_evaluator/plan.md | 3912cdddb0b871cf5521faacd51fa499de8d6514c614f1cee654c46d7e25f1ce |
 | task_memory/task_2026-07-19_safe_bound_evaluator/notes.md | 4c1971a63399265347a83cb144126213839c5eb9fd57ebcb185c66509a36e438 |
 | task_memory/task_2026-07-19_safe_bound_evaluator/issues.md | c3f4ede19e7c2edc96023282619d7d97b7f0041000aa1e7aa3a30026976dcfc6 |
-| task_memory/task_2026-07-19_safe_bound_evaluator/review.md | 44e426fdcbae76905e1b051609d5d6b1a5de305701a7c46d92169fc2e9f2ea2b |
-| task_memory/task_2026-07-19_safe_bound_evaluator/progress.md | dba1ef23f731a2b9ac032ae5664af9f7a7ab2de9b385ed192653d4f896e0f311 |
+| task_memory/task_2026-07-19_safe_bound_evaluator/review.md | e21a5ab7e2c42e57939cd7e7013cb46f9d672b0da247327d16d3928b70c17229 |
+| task_memory/task_2026-07-19_safe_bound_evaluator/progress.md | d131c75d5e1e51e220685827490ec982b0d6e5e5ce2bce8d55b81bc0cd14eb34 |
 | task_memory/task_2026-07-19_safe_bound_evaluator/lessons.md | 329b0175f18e1eaac8e8b523ac4310e26f5cb22e0e418b065784523b98255ee7 |
 | task_memory/task_2026-07-19_safe_bound_evaluator/future.md | ba5460ea293ba48390606b5c5c10b7dd219a51d0a705d20c319e5c4379655510 |
-| task_memory/task_2026-07-19_safe_bound_evaluator/test_report_2026-07-19_safe_bound_evaluator.md | a16655f3023f6193ab75abb07a6b2762b9cb3cdeda8227d75b9473eed753d0d8 |
+| task_memory/task_2026-07-19_safe_bound_evaluator/test_report_2026-07-19_safe_bound_evaluator.md | b4629c043ffee95e10e26e58b111c01585a686cfb914bdc037182e970873748d |
 | task_memory/task_2026-07-19_safe_bound_evaluator/summary.md | See authoritative entry in task_memory/task_2026-07-19_safe_bound_evaluator/checksums.sha256 |
 | task_memory/task_2026-07-19_safe_bound_evaluator/checksums.sha256 | Manifest intentionally excludes its own digest |
 
@@ -62,6 +63,7 @@ The following substantive deliverables have exact SHA-256 digests. The summary's
 | Scheduler counterexample | Preserve existing order-sensitive evidence | long-first_makespan=21.0; short-first_makespan=11.0 | PASS |
 | Whitespace check | No diff whitespace errors | git diff --check exit code 0 | PASS |
 | Checksum verification | Every manifest entry verifies | sha256sum -c: all entries OK | PASS |
+| Branch delivery | Clean commit pushed and remote ref equals local | 9f52c29e583b53533ddd30fb43ab497ea60eda21; local/remote equal | PASS |
 
 ### Functional metrics
 
