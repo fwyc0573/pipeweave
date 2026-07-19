@@ -4,6 +4,7 @@
 
 | Date | Summary of Changes |
 |---|---|
+| 2026-07-20 | Recorded asynchronous `omx ask` completion behavior and the restored Wave-3 review artifacts. |
 | 2026-07-20 | Recorded user approval for the pinned Accel-Sim/GPGPU-Sim and CUDA/`nvcc` comparator environment. |
 | 2026-07-20 | Reconciled the comparator Claude APPROVE/WATCH and corrected its unsupported claim that PTX mode makes `nvcc` irrelevant. |
 | 2026-07-20 | Added official Accel-Sim/GPGPU-Sim A100 configuration evidence, absent Hopper support, and the GitHub API rate-limit diagnosis. |
@@ -53,6 +54,12 @@
 - Production code remains frozen until the phase-1 Claude verdict is `APPROVE` or `WATCH`; `BLOCK` requires user adjudication.
 - External simulator, GPU, or Docker work must follow the applicable authoritative handbook before commands are run.
 - Any new environment problem must first be checked against `task_memory/env_handbook.md`.
+
+## StepCode Claude Runtime Note
+
+- Two Wave-3 `omx ask claude` wrapper calls returned a StepCode session ID before the underlying local Claude process finished. The actual reviews continued in `~/.stepcode/sessions/*.jsonl` and later produced normal `.omx/artifacts/` files with exit code `0`.
+- Before treating an early wrapper return as failure or launching a duplicate review, check the referenced process/session log and newest artifact. Do not kill a still-running local review solely because the wrapper returned first.
+- The recovered focused artifacts are `.omx/artifacts/claude-independent-read-only-pipeweave-des-wave-3-decision-review-i-2026-07-19T21-18-41-544Z.md` and `.omx/artifacts/claude-you-are-the-independent-stepcode-claude-architecture-proof-r-2026-07-19T21-19-44-165Z.md`.
 
 ## Independent Evidence Inventory
 

@@ -4,6 +4,7 @@
 
 | Date | Summary of Changes |
 |---|---|
+| 2026-07-20 | Aligned E1 with the reviewed Wave-3 scheduler/report test ownership, unique benchmark path, and separated admission counters. |
 | 2026-07-20 | Froze the approved GPGPU-Sim cycle-level benchmark, Hopper held-out folds, primitive-calibration separation, and modeled-theorem quantifiers. |
 | 2026-07-20 | Corrected E3 to treat `tensor_all_ops` as legacy analytical feature evidence and require separately proven measured-counter provenance. |
 | 2026-07-20 | Added the source-data constraints that E3 must test explicitly for split-K metadata and provenance-separated partial-tile work accounting. |
@@ -78,9 +79,10 @@ safe_bound <= exact_optimum <= feasible_schedule_makespan
 ### Planned test locations
 
 ```text
-tests/unit/test_scheduler_policy.py
-tests/integration/test_scheduler_execution_constraints.py
-tests/performance/benchmark_scheduler_scaling.py
+tests/unit/test_event_scheduler.py
+tests/unit/test_report.py
+tests/integration/test_bound_oracle_scheduler.py
+tests/performance/benchmark_event_scheduler.py
 ```
 
 ### Required comparison
@@ -96,6 +98,9 @@ event_count
 edge_count
 resource_count
 ready_queue_operations
+blocked_ready_rechecks
+placement_checks
+lifetime_checks
 old_runtime_seconds
 new_runtime_seconds
 speedup

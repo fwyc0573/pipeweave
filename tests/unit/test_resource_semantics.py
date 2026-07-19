@@ -285,6 +285,21 @@ def test_resource_lifetime_is_immutable_and_detached_from_inputs():
         lifetime.per_sm_reservation["cta_slots"] = 2
 
 
+def test_resource_lifetime_returns_only_transient_per_sm_demand():
+    lifetime = ResourceLifetime(
+        "worker",
+        "acquire",
+        "release",
+        {"cta_slots": 1},
+    )
+
+    transient = lifetime.transient_per_sm_demand(
+        {"cta_slots": 1, "tensor_core": 1, "explicit_zero": 0}
+    )
+
+    assert transient == {"tensor_core": 1, "explicit_zero": 0}
+
+
 @pytest.mark.parametrize(
     ("lifetime_kwargs", "config_kwargs", "message"),
     [

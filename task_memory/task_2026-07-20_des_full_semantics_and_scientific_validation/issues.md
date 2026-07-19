@@ -4,6 +4,10 @@
 
 | Date | Summary of Changes |
 |---|---|
+| 2026-07-20 | Resolved generated benchmark CSV CRLF output at its unique writer and added a focused LF regression test. |
+| 2026-07-20 | Closed the Wave-3 scheduler measurement obligation and recorded the historical-runtime provenance WATCH. |
+| 2026-07-20 | Resolved the lifetime-covered SafeBound safety violation, documented greedy-policy no-progress, and opened the lifetime-validation complexity WATCH. |
+| 2026-07-20 | Resolved the Wave-3/Wave-4 focused-test ownership and scheduler benchmark path conflicts through an independent Claude gate. |
 | 2026-07-20 | Resolved the resource-free SafeBound `max` call defect found during the first GREEN attempt. |
 | 2026-07-20 | Resolved the Wave-2 review/test arithmetic defects and preserved the sound per-SM exact-domain boundary. |
 | 2026-07-20 | Resolved the Wave-1 line-length audit scope defect without reformatting unrelated legacy imports or weakening the diff gate. |
@@ -157,17 +161,17 @@
 
 ### FSV-019 — Dependency acyclicity alone does not prevent lifetime resource deadlock
 
-- **Status:** Cross-lifetime member demand implemented; broader external-event placement/no-progress case assigned to Wave 3.
-- **Root cause:** The shared-kernel Claude review claimed an acyclic EventGraph makes lifetime deadlock impossible. Resource wait cycles need not be dependency cycles: two lifetimes can reserve different per-SM resources while their members wait for each other's held resource.
-- **Impact:** A direct implementation of the review text could stall even though the dependency graph is valid.
-- **Resolution required:** Separate lifetime-held occupancy resources from transient execution resources. Member use of a held resource must fit inside its own reservation; transient demands are admitted atomically only at Event start and released at completion. The Wave-1 RED two-lifetime member-demand counterexample is GREEN. StepCode Claude confirmed that blanket static rejection of a release dependency on an external same-resource Event would be unnecessarily conservative because another SM may be feasible. Wave 3 must test successful alternate-SM placement and explicit no-progress failure when no placement exists; a silent stall, partial schedule, or fallback remains prohibited.
+- **Status:** Core lifetime safety semantics resolved; fixed-priority scheduler completeness remains a documented WATCH.
+- **Root cause:** Dependency acyclicity does not eliminate resource wait cycles. Cross-lifetime members can demand each other's held resources, and a fixed greedy priority can also admit a lifetime before an independent release prerequisite that needs the same exhausted resource.
+- **Impact:** Without semantic separation, the scheduler can stall or double-count demand. Even after that correction, the greedy policy can raise no-progress on a graph that another event order could schedule; this affects scheduler completeness, not feasibility of returned outputs.
+- **Resolution:** `EventGraph` rejects cross-lifetime member demand, `ResourceLifetime` owns reservation-to-transient demand normalization, and the scheduler admits additional transient demand atomically. Alternate-SM progress and genuinely unavailable no-progress are tested. For the independent-prerequisite counterexample, `SchedulingNoProgressError` remains an explicit policy/domain boundary. No backtracking, retry, second policy, or blanket graph rejection is added: `EventGraph` does not own `ResourceConfig`, and an unconditional dependency-cone rejection would reject the required alternate-SM feasible case. A future complete lifetime scheduler would require a separately approved design.
 
 ### FSV-020 — Ready-queue bookkeeping does not prove total scheduler complexity
 
-- **Status:** Design corrected; measurement pending.
+- **Status:** Wave-3 measurement complete; broad asymptotic claims remain intentionally absent.
 - **Root cause:** The shared-kernel review derived `O((V+E) log V)` while separately acknowledging eligible-SM scans. It also omitted repeated checks of blocked ready Events under simultaneous multi-resource demand and lifetime reservations.
 - **Impact:** The scheduler rewrite could repeat the current mistake of presenting a partial complexity analysis as an end-to-end performance result.
-- **Resolution required:** Separate graph/heap operations from placement/admission cost, instrument scans/checks, and report wall-clock runtime on declared graph sizes including the historical `58,467`-Event case. Claim only the complexity justified by the implemented data structures.
+- **Resolution:** `tests/performance/benchmark_event_scheduler.py` separately times normalized graph construction/validation, scheduling, and report assembly and reports the four frozen counters. The actual `58,467`-Event row measured graph build `0.720789447980s`, scheduling `23.005453476013s`, report assembly `0.678323030996s`, and primary pipeline `24.404565954988s`; counters were `5,491,878` ready-queue operations, `2,687,472` blocked rechecks, `2,587,872` placement checks, and `0` lifetime checks. The historical scheduler-time value was `115.882818766s`, giving a size-matched historical ratio of `4.748407284921x`. The stages are not identical, so this is not a controlled speedup study. No total O-notation or cycle-level speed claim is made.
 
 ### FSV-021 — Static cache order is a modeled input, not a hardware-universal trace
 
@@ -203,3 +207,38 @@
 - **Root cause:** `max(critical_path, *global_terms, *per_sm_terms)` becomes the one-argument call `max(critical_path)` when both mappings are empty. Python interprets a one-argument `max` call as an iterable form, so the float critical-path value raised `TypeError`.
 - **Impact:** The first SafeBound GREEN attempt reported `4 failed, 48 passed`; every failing case used a valid resource-free configuration. Resource-bearing cases already passed.
 - **Resolution:** Construct one tuple containing the critical path and all resource terms, then call `max` on that tuple. This directly models the mathematical set of proven terms, covers the empty-resource boundary without a special-case branch, and preserves fail-fast semantics. The rerun passed `52/52`; the combined Wave-2 suite passed `76/76`.
+
+### FSV-026 — Wave-3 focused tests and benchmark paths crossed ownership boundaries
+
+- **Status:** Resolved on 2026-07-20 before Wave-3 RED.
+- **Root cause:** The Wave-3 command included `tests/integration/test_operator_simulation.py` even though its `operators.py` and `hardware_adapter.py` callers still use the deliberately removed legacy API and are assigned to Wave 4. `experiments.md` also named `benchmark_scheduler_scaling.py` while `plan.md` owned `benchmark_event_scheduler.py`.
+- **Impact:** Running the operator integration in Wave 3 would fail before scheduler behavior and create pressure for either premature Wave-4 edits or a forbidden compatibility adapter. Two benchmark paths would duplicate the same evidence owner.
+- **Resolution:** StepCode Claude returned **APPROVE** for hand-built EventGraph/ResourceConfig scheduler/report tests in Wave 3, retaining operator integration under Wave 4, and using only `tests/performance/benchmark_event_scheduler.py`. The review also approved one frozen SchedulerCounters value, zero-result empty scheduling, smallest-feasible-SM tie behavior, and deferral of a measured-comparison report parameter until its concrete type exists.
+
+### FSV-027 — SafeBound counted lifetime-covered demand as transient work
+
+- **Status:** Resolved on 2026-07-20.
+- **Root cause:** The scheduler privately removed resources served by a lifetime reservation, while `SafeBoundEvaluator` summed raw `event.per_sm_demand`. With one reserved slot and two parallel covered members, the aggregate term became `2.0` although the feasible makespan was `1.0`.
+- **Impact:** `SafeBound.bound <= modeled optimum` was false for an accepted lifetime graph, violating the inherited Safety Gate.
+- **Resolution:** Added one `ResourceLifetime.transient_per_sm_demand()` owner operation and used it in both scheduler admission/release and SafeBound resource-time accounting. Covered demand is omitted with the relaxed reservation; additional endpoint/member transient demand remains counted; explicit-zero non-reservation entries remain unchanged. The reproduced term changed from `2.0` to `0.0`, feasible makespan remained `1.0`, and the 192-test Wave-1–3 regression passed.
+
+### FSV-028 — Lifetime membership validation is not linear in graph size
+
+- **Status:** WATCH; benchmark accounting corrected, implementation unchanged.
+- **Root cause:** `EventGraph.__post_init__` calls reachability checks from the acquire endpoint and to the release endpoint for each lifetime member. In the worst case this is `O(M * (V + E))`, not one global `O(V + E)` pass.
+- **Impact:** A lifetime-heavy graph can spend material time in construction/validation even when scheduler-local queue processing is efficient. A scheduler-only timer could misattribute or hide this cost.
+- **Resolution:** The Wave-3 benchmark now times graph construction/validation separately from scheduling and report assembly. Its no-lifetime graph intentionally does not claim to measure the `O(M * (V + E))` lifetime-heavy case. No reachability refactor was added; any future optimization still needs its own design, RED cases, and equivalence proof.
+
+### FSV-029 — Historical scheduler runtime environment is only partially recorded
+
+- **Status:** Low-severity WATCH; documented and non-blocking for the Wave-3 checkpoint.
+- **Root cause:** The six historical old-runtime constants originate from the parent task's reviewed scheduler evidence, whose report records `/usr/bin/python` `3.12.3`, no active conda/venv, and pytest `9.1.1`, but does not identify the host CPU or a standalone raw benchmark artifact for those six points.
+- **Impact:** The parent names the first five values as legacy scheduler-time medians, while the new denominator includes graph construction/validation, scheduling, and report assembly. The ratio is useful size-matched historical context but is not a stage-matched or fully controlled machine-to-machine performance study and cannot support a cycle-level or `10000x` claim.
+- **Resolution:** The Wave-3 benchmark and report name the exact parent source, record the available environment, preserve every absolute value, and label the ratio as a size-matched historical comparison only. Reproducing the retired implementation on a pinned host is not required by the current design and is not replaced by an invented stage or environment claim.
+
+### FSV-030 — The benchmark CSV writer emitted CRLF on the Linux delivery path
+
+- **Status:** Resolved on 2026-07-20 before commit.
+- **Root cause:** Python's `csv.DictWriter` inherited the default Excel dialect, whose line terminator is `\r\n`. The initial untracked-text grep did not classify the carriage return as a blank character, but staged `git diff --check` correctly rejected all eight generated CSV lines as trailing whitespace.
+- **Impact:** The numeric benchmark data and tests were correct, but the authoritative raw artifact could not pass the repository delivery gate. Manually editing only the CSV would allow the unique writer to reproduce the defect later.
+- **Resolution:** Added an observed RED test that runs the unique benchmark writer on the exact small case and rejects carriage returns. Set only `lineterminator="\n"` on that `csv.DictWriter`, normalized the existing eight-row artifact while asserting eight replacements and zero remaining CR bytes, and reran the module and Wave-1--3 regressions. The focused module passed `12/12`; the full checkpoint passed `205/205`; the normalized artifact SHA-256 is `13dad9670800d8362c5c16f182b48255bf26e0c86cf0986b1156fe08e6a125f5`.

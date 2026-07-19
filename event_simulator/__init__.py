@@ -19,7 +19,13 @@ from .structural import (
 from .report import SimulationReport, build_report
 from .safe_bound import SafeBound, SafeBoundEvaluator
 from .resources import PrimitiveCalibration, ResourceConfig, ResourceLifetime
-from .scheduler import ScheduleEntry, SimulationResult, schedule
+from .scheduler import (
+    ScheduleEntry,
+    SchedulerCounters,
+    SchedulingNoProgressError,
+    SimulationResult,
+    schedule,
+)
 
 __all__ = [
     "EVENT_TYPES",
@@ -35,6 +41,8 @@ __all__ = [
     "SafeBound",
     "SafeBoundEvaluator",
     "ScheduleEntry",
+    "SchedulerCounters",
+    "SchedulingNoProgressError",
     "SimulationReport",
     "SimulationResult",
     "build_report",

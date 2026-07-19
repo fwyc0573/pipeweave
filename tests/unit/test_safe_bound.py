@@ -10,6 +10,7 @@ from event_simulator import (
     SafeBound,
     SafeBoundEvaluator,
     compare_des_bound,
+    schedule,
 )
 
 
@@ -205,6 +206,82 @@ def test_safe_bound_names_affinity_and_lifetime_relaxations():
         "resource_lifetime_reservations",
     )
     assert result.bound == 2.0
+
+
+def test_lifetime_covered_member_demand_is_not_counted_as_transient_work():
+    lifetime = ResourceLifetime(
+        lifetime_id="worker",
+        acquire_event_id="acquire",
+        release_event_id="release",
+        per_sm_reservation={"slot": 1},
+    )
+    graph = EventGraph(
+        (
+            _event("acquire", 0.0, lifetime_id="worker"),
+            _event(
+                "member-a",
+                1.0,
+                dependencies=("acquire",),
+                per_sm_demand={"slot": 1},
+                lifetime_id="worker",
+            ),
+            _event(
+                "member-b",
+                1.0,
+                dependencies=("acquire",),
+                per_sm_demand={"slot": 1},
+                lifetime_id="worker",
+            ),
+            _event(
+                "release",
+                0.0,
+                dependencies=("member-a", "member-b"),
+                lifetime_id="worker",
+            ),
+        ),
+        lifetimes=(lifetime,),
+    )
+    config = _config(sm_count=1, per_sm_capacities={"slot": 1})
+
+    bound = SafeBoundEvaluator().evaluate(graph, config)
+    feasible = schedule(graph, config)
+
+    assert feasible.makespan == 1.0
+    assert bound.aggregate_per_sm_terms["slot"] == 0.0
+    assert bound.bound <= feasible.makespan
+
+
+def test_lifetime_member_contributes_only_additional_transient_demand():
+    lifetime = ResourceLifetime(
+        lifetime_id="worker",
+        acquire_event_id="acquire",
+        release_event_id="release",
+        per_sm_reservation={"slot": 1},
+    )
+    events = (
+        _event(
+            "acquire",
+            2.0,
+            per_sm_demand={"slot": 1, "alu": 1},
+            lifetime_id="worker",
+        ),
+        _event(
+            "release",
+            2.0,
+            dependencies=("acquire",),
+            per_sm_demand={"slot": 1, "alu": 1},
+            lifetime_id="worker",
+        ),
+    )
+
+    result = _evaluate(
+        events,
+        _config(per_sm_capacities={"slot": 1, "alu": 1}),
+        lifetimes=(lifetime,),
+    )
+
+    assert result.aggregate_per_sm_terms["slot"] == 0.0
+    assert result.aggregate_per_sm_terms["alu"] == 4.0
 
 
 def test_safe_bound_is_not_implicitly_a_bound_comparison_input():

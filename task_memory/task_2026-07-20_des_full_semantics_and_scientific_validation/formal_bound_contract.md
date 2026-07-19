@@ -4,6 +4,7 @@
 
 | Date | Summary of Changes |
 |---|---|
+| 2026-07-20 | Corrected the aggregate per-SM theorem to count only reservation-normalized transient demand and recorded the lifetime-covered counterexample. |
 | 2026-07-20 | Established the Wave-2 exact-oracle domain, SafeBound proof, named relaxations, and exhaustive tiny-case evidence. |
 
 ## Status
@@ -53,6 +54,19 @@ and one validated `ResourceConfig` with:
 
 Eligible-SM affinity and `ResourceLifetime` reservations may be present in the
 SafeBound input, but they are deliberately dropped and named as relaxations.
+Before this relaxation, each lifetime member's per-SM vector is normalized:
+
+```text
+transient_per_sm_demand[e, r] =
+    0                       if e belongs to lifetime L and r is reserved by L
+    per_sm_demand[e, r]     otherwise
+```
+
+`EventGraph` validation already proves that a member's covered demand fits
+inside its own reservation. Covered demand is therefore served by the held
+reservation and is not demand on the transient replicated pool. Additional
+per-SM demand on acquire, member, or release Events remains event-local and is
+counted. Explicit zero entries outside the reservation remain zero entries.
 Dynamic cache transitions, persistent work assignment, split-K topology,
 reduction work, and partial-tile issued work must first lower into the fixed
 graph/duration/demand contract owned by their later modules. The proof layer
@@ -123,7 +137,7 @@ global_resource_term[r]
     sum(duration[e] * global_demand[e, r]) / global_capacity[r]
 
 aggregate_per_sm_term[r]
-    sum(duration[e] * per_sm_demand[e, r])
+    sum(duration[e] * transient_per_sm_demand[e, r])
     / (sm_count * per_sm_capacity[r])
 ```
 
@@ -152,9 +166,19 @@ of independently proven lower bounds remains safe.
 
 Dropping eligible-SM affinity enlarges the feasible set and cannot increase the
 relaxed optimum. Dropping cross-Event lifetime reservations has the same
-direction. The result records these omissions as, respectively,
+direction only after reservation-covered demand is removed from the transient
+pool term. The reservation and its covered demand are omitted together; fixed
+durations and additional transient demand remain. The result records these
+omissions as, respectively,
 `eligible_sm_affinity` and `resource_lifetime_reservations`; it adds no
 unproved tightening term for either constraint.
+
+The regression counterexample uses one SM with transient `slot` capacity `1`,
+one lifetime reservation of `slot=1`, and two parallel duration-`1` members
+whose `slot=1` demand is fully covered by that reservation. The feasible
+makespan is `1.0`. Counting raw member demand produced an invalid aggregate
+term of `2.0`; reservation normalization produces the correct transient term
+of `0.0`, while the dependency critical path remains `1.0`.
 
 For two SMs with per-SM capacity `3` and three independent duration-`1` Events
 each demanding `2`, the aggregate term is:

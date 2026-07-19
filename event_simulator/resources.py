@@ -121,6 +121,17 @@ class ResourceLifetime:
                 raise ValueError("eligible SM ids must be non-negative integers")
             object.__setattr__(self, "eligible_sms", eligible_sms)
 
+    def transient_per_sm_demand(
+        self, demand: Mapping[str, int]
+    ) -> dict[str, int]:
+        """Return demand not served by this lifetime's reservation."""
+
+        return {
+            resource: quantity
+            for resource, quantity in demand.items()
+            if resource not in self.per_sm_reservation
+        }
+
 
 def _freeze_capacities(
     capacities: Mapping[str, int], label: str

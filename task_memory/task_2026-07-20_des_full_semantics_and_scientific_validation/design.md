@@ -4,6 +4,8 @@
 
 | Date | Summary of Changes |
 |---|---|
+| 2026-07-20 | Corrected lifetime-covered transient-demand ownership and documented the greedy scheduler's explicit no-progress policy boundary. |
+| 2026-07-20 | Froze the reviewed Wave-3 SchedulerCounters, SimulationResult, report provenance, empty-graph, placement-tie, and lifetime timing contracts. |
 | 2026-07-20 | Froze the measured-calibration, held-out zero-shot, modeled-universal theorem, comparator approval, and Phase-2 ownership contracts. |
 | 2026-07-20 | Identified Accel-Sim/GPGPU-Sim A100 as the only source-backed comparator candidate and recorded its approval/toolchain boundary. |
 | 2026-07-20 | Selected the dependency-free exhaustive serial SGS exact oracle and added the project-domain completeness proof obligation and independent cross-check. |
@@ -19,7 +21,7 @@
 
 ## Status
 
-This is the **independently approved and freshly validated Phase-1 implementation design**, pending only its required checkpoint commit and push. The four-layer provenance split, shared execution kernel, exact engine, cache/manifest semantics, calibration/held-out/theorem boundaries, and Accel-Sim/GPGPU-Sim dependency are resolved. StepCode Claude returned `APPROVE` with no blocker; the document contract and full `141/141` regression pass. Production-code changes remain prohibited until this design checkpoint is committed and pushed.
+This is the **independently approved and checkpointed implementation design**. Phase 1 and the reviewed Wave-1/2 proof kernel are committed and pushed; Phase 2 Wave 3 is active. The four-layer provenance split, shared execution kernel, exact engine, cache/manifest semantics, calibration/held-out/theorem boundaries, and Accel-Sim/GPGPU-Sim dependency are resolved. StepCode Claude returned `APPROVE` at the complete design gate, both implemented module gates, and the Wave-3 pre-implementation ownership/interface gate.
 
 ## Design Objective
 
@@ -69,7 +71,7 @@ Calibration and evaluation data are tracked by provenance. Calibration data, dev
 
 1. “Universal” means universal only over the declared normalized fixed-duration model; real hardware receives a separate finite empirical audit.
 2. Cache state is one manifest-order, fully associative, size-aware LRU abstract L2 over HBM, with explicit initial recency/dirty state and output visibility.
-3. `Event` owns immutable event-local demand; `ResourceLifetime` owns cross-event CTA occupancy reservation; `ScheduleEntry` owns placement and time.
+3. `Event` owns immutable event-local demand; `ResourceLifetime` owns cross-event CTA occupancy reservation and the normalization from raw member demand to uncovered transient demand; `ScheduleEntry` owns placement and time.
 4. Scheduler priority is descending remaining dependency-path duration with `event_id` tie-break; implicit iterable stream order and scheduler-written dependencies are removed.
 5. The exact oracle exhaustively evaluates every precedence-feasible permutation with serial SGS over its declared no-lifetime/no-affinity domain.
 6. `GemmLaunchManifest` is the sole new-path source for persistent worker assignment, split-K partitions, reduction topology, and issued extents.
@@ -246,7 +248,7 @@ ResourceConfig
 
 `Event` no longer stores `start_time` or `end_time`. It carries explicit dependencies, fixed duration, immutable global and per-SM demand vectors, optional non-lifetime SM eligibility, work/traffic metadata, and optional lifetime membership. `EventGraph` owns unique IDs, dependency existence, canonical `event_id` order, successor/indegree maps, acyclicity, and lifetime endpoint/membership validation. SafeBound, the exact oracle, the feasible scheduler, and reporting consume this same normalized object; no downstream module repeats graph validation or reconstructs stream edges.
 
-`EventGraph` is a frozen validated value, not a mutable graph framework. A boundary function may construct it, but callers receive one typed graph contract rather than parallel tuples and dictionaries with duplicated invariants. `ScheduleEntry` is a distinct frozen result record because schedule placement is not part of the Event specification. `SimulationResult` contains the graph identity plus immutable entries and makespan; it never rewrites semantic dependencies with scheduler-selected resource predecessors.
+`EventGraph` is a frozen validated value, not a mutable graph framework. A boundary function may construct it, but callers receive one typed graph contract rather than parallel tuples and dictionaries with duplicated invariants. `ScheduleEntry` is a distinct frozen result record because schedule placement is not part of the Event specification. `SimulationResult` contains the graph identity plus immutable entries, makespan, and one frozen `SchedulerCounters` value; it never rewrites semantic dependencies with scheduler-selected resource predecessors. The counters contain only `ready_queue_operations`, `blocked_ready_rechecks`, `placement_checks`, and `lifetime_checks`, keeping operational instrumentation separate from schedule evidence without adding a diagnostics module. `SimulationResult.by_id()` returns an immutable Event-ID-to-ScheduleEntry mapping. An empty EventGraph has one deterministic feasible result: empty entries, zero makespan, and zero counters; the exact-oracle and SafeBound non-empty domains remain unchanged.
 
 All certified ordering is explicit. `stream_ordered` and caller-iterable stream inference are removed from the new path. Workload composition adds the prior kernel-completion dependency to the next launch explicitly. Existing input-order compatibility is intentionally broken rather than retained through an adapter. FA lowering must stop interleaving Event lists to manipulate lane selection and must emit explicit worker assignment/affinity semantics instead.
 
@@ -271,11 +273,41 @@ An acyclic dependency graph alone does **not** rule out resource deadlock. Two l
 - transient global/per-SM Event demands are acquired atomically only when the Event can start and are released at Event completion;
 - no Event can hold a transient resource while waiting for another resource.
 
-This removes hold-and-wait rather than relying on a false DAG-only deadlock argument. Persistent CTA execution is the same lifetime contract with multiple ordered work items; ordinary CTA execution uses a shorter lifetime. The exact oracle initially rejects lifetimes and affinity. The scalable SafeBound may omit those constraints as an explicit relaxation, but it must not report a lifetime- or affinity-aware term that it did not prove.
+This removes cross-lifetime member hold-and-wait rather than relying on a false DAG-only deadlock argument. Persistent CTA execution is the same lifetime contract with multiple ordered work items; ordinary CTA execution uses a shorter lifetime. The exact oracle initially rejects lifetimes and affinity. The scalable SafeBound may omit those constraints as an explicit relaxation, but its aggregate per-SM term counts only demand not covered by a member's own reservation. The reservation and covered demand are omitted together; no reservation-duration tightening term is added.
 
-The feasible scheduler uses one deterministic priority computed from the normalized graph: descending remaining dependency-path duration, then `event_id`. At each completion time it releases finished demands/reservations, exposes newly ready successors, and admits the highest-priority currently feasible Events atomically. Blocked ready Events remain pending until relevant capacity changes. This policy is caller-order invariant and produces a feasible schedule, not an optimum certificate.
+The feasible scheduler uses one deterministic priority computed from the normalized graph: descending remaining dependency-path duration, then `event_id`. At each completion time it releases finished demands/reservations, exposes newly ready successors, and admits the highest-priority currently feasible Events atomically. Blocked ready Events remain pending until relevant capacity changes. Every returned result is caller-order invariant and feasible, but the fixed greedy policy is not a complete feasibility solver and does not promise a result for every graph that another ordering could schedule. If no Event can run or complete, it raises `SchedulingNoProgressError`; that error is an explicit policy/domain boundary, not a proof that the normalized graph is infeasible.
 
-The graph bookkeeping has a justified `O(V + E)` preprocessing cost plus priority-queue operations. The full multi-resource admission/placement cost is **not** claimed as `O((V+E) log V)`: revisiting blocked Events and checking eligible SMs can add workload-dependent scans. Phase 2 must report total measured runtime, event/edge counts, ready-set scans, placement checks, and the historical `58,467`-Event comparison. A narrower complexity claim is accepted only after the implemented data structures justify it.
+One accepted one-SM counterexample has a lifetime acquire that reserves the only
+slot, an independent non-member Event that also needs the slot, and a release
+that depends on both. A feasible order schedules the independent Event first,
+but the frozen priority can acquire the reservation first and then report no
+progress. Wave 3 records this limitation rather than adding backtracking,
+retry, a second scheduling policy, or a blanket EventGraph rejection that would
+incorrectly reject the corresponding alternate-SM case.
+
+For deterministic placement, the scheduler chooses the smallest feasible SM ID.
+A pure global Event with no affinity, lifetime, or per-SM demand has
+`ScheduleEntry.sm_id=None`. A lifetime acquire atomically reserves its chosen
+SM immediately before the acquire Event starts; the reservation remains held
+through release Event completion. Member demand on a covered resource is
+served from that reservation rather than added to it. Acquire/release
+transient demands remain event-local and atomic. At one timestamp, completed
+transient demand and completed release reservations are removed before new
+admission. Zero-duration acquire/release Events occupy no resource-time but
+still apply their reservation state transition and dependency completion at
+that timestamp.
+
+Wave-3 reporting accepts a `SimulationResult` plus optional existing
+`ExactScheduleResult` and `SafeBound` inputs. `SimulationReport` names
+`feasible_makespan`, `dependency_critical_path`, optional `exact_optimum`, and
+optional `safe_bound_value` separately. It combines Event specifications from
+`result.graph` with immutable ScheduleEntry witnesses and computes
+demand-weighted resource-time. A measured-comparison parameter is not added
+until its concrete evidence type exists; Wave 3 does not introduce an `Any`
+placeholder. The report may reuse proof-layer critical-path computation but
+must not re-run graph/resource validation or scheduling.
+
+Scheduler-local topological bookkeeping has a justified `O(V + E)` cost plus priority-queue operations after it receives a validated graph. This does not describe `EventGraph` construction: current lifetime membership validation performs reachability work per member and can cost `O(M * (V + E))` for `M` lifetime members. The full multi-resource admission/placement cost is **not** claimed as `O((V+E) log V)`: blocked-event wakes, eligible-SM checks, and lifetime admission remain workload dependent. Phase 2 must time graph construction/validation, scheduling, and report assembly separately and record event/edge counts, ready-queue operations, blocked rechecks, placement checks, lifetime checks, and the historical `58,467`-Event comparison. A narrower complexity claim is accepted only after the implemented data structures and measured evidence justify it.
 
 The following compatibility behaviors are deliberately removed rather than wrapped:
 

@@ -4,6 +4,7 @@
 
 | Date | Summary of Changes |
 |---|---|
+| 2026-07-20 | Passed the Wave-3 pre-implementation Claude gate and reconciled scheduler/report ownership, counters, report provenance, and benchmark paths. |
 | 2026-07-20 | Closed the fresh Wave-2 handoff gate and advanced execution to Wave-3 scheduler/report TDD. |
 | 2026-07-20 | Passed the Wave-2 Claude proof-layer gate with APPROVE; only fresh handoff verification remains before Wave 3. |
 | 2026-07-20 | Completed Wave-2 implementation and exhaustive evidence; the independent proof-layer Claude gate is now the only remaining Wave-2 exit action. |
@@ -133,7 +134,7 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD" python -m pytest -p no:cacheprovider
 **Entry invariant:** Wave 1 semantic kernel is accepted; Wave 2 exact oracle is available for tiny comparisons.
 
 1. RED scheduler tests for priority/tie order, dependency feasibility, atomic multi-resource placement, per-SM co-location, affinity, lifetime acquisition/release, blocked-ready rechecks, zero duration, impossible state, and caller-order invariance. Include the reviewed case where a lifetime release depends on an external Event demanding the same reserved occupancy resource: progress on another eligible SM must succeed, while no feasible placement must raise an explicit no-progress error rather than stall.
-2. GREEN ready-queue/event-completion scheduler with immutable ScheduleEntry and explicit admission counters.
+2. GREEN ready-queue/event-completion scheduler with immutable ScheduleEntry and one frozen SchedulerCounters value containing the four explicit admission/complexity counters.
 3. RED/ GREEN report tests separating dependency critical path, exact optimum, SafeBound, feasible makespan, and demand-weighted resource-time.
 4. Run `tests/performance/benchmark_event_scheduler.py` on versioned graph sizes including the historical `58,467`-Event case; record events, edges, heap operations, ready scans, placement checks, lifetime checks, wall time, expected old `115.882818766s`, actual new runtime, and delta.
 
@@ -141,10 +142,15 @@ Focused command:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD" python -m pytest -p no:cacheprovider \
-  tests/unit/test_event_scheduler.py tests/unit/test_report.py \
-  tests/integration/test_operator_simulation.py -q
+  tests/unit/test_event_scheduler.py tests/unit/test_report.py -q
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD" python tests/performance/benchmark_event_scheduler.py
 ```
+
+`tests/integration/test_operator_simulation.py` remains mandatory under Wave 4,
+where `operators.py` and `hardware_adapter.py` own the deliberate legacy-API
+migration. Running it in Wave 3 would test the old lowering boundary before
+reaching scheduler behavior and would encourage a prohibited compatibility
+adapter.
 
 **Exit invariant:** every output is deterministic and feasible, no Event is mutated, no scheduler result is labeled a bound, and total performance claims include placement/scanning work plus measured wall time. Run independent Claude scheduler/report code review.
 

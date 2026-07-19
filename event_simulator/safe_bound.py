@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections import deque
 from dataclasses import dataclass
+import heapq
 from types import MappingProxyType
 from typing import Mapping
 
@@ -45,7 +45,20 @@ class SafeBoundEvaluator:
             raise ValueError("safe bound requires a non-empty EventGraph")
         config.validate_graph(graph)
 
-        critical_path = _dependency_critical_path(graph)
+        critical_path, _ = dependency_critical_path(graph)
+        lifetime_by_id = {
+            lifetime.lifetime_id: lifetime for lifetime in graph.lifetimes
+        }
+        transient_per_sm_demand = {
+            event.event_id: (
+                event.per_sm_demand
+                if event.lifetime_id is None
+                else lifetime_by_id[
+                    event.lifetime_id
+                ].transient_per_sm_demand(event.per_sm_demand)
+            )
+            for event in graph.events
+        }
         global_terms = {
             resource: sum(
                 float(event.duration) * event.global_demand.get(resource, 0)
@@ -56,7 +69,8 @@ class SafeBoundEvaluator:
         }
         per_sm_terms = {
             resource: sum(
-                float(event.duration) * event.per_sm_demand.get(resource, 0)
+                float(event.duration)
+                * transient_per_sm_demand[event.event_id].get(resource, 0)
                 for event in graph.events
             )
             / (config.sm_count * capacity)
@@ -87,23 +101,54 @@ class SafeBoundEvaluator:
         )
 
 
-def _dependency_critical_path(graph: EventGraph) -> float:
+def dependency_critical_path(
+    graph: EventGraph,
+) -> tuple[float, tuple[str, ...]]:
+    """Return the deterministic dependency-only longest path and witness."""
+
+    if not graph.events:
+        return 0.0, ()
+
     indegrees = dict(graph.indegrees)
-    ready = deque(
+    ready = [
         event.event_id
         for event in graph.events
         if indegrees[event.event_id] == 0
-    )
+    ]
+    heapq.heapify(ready)
     completion: dict[str, float] = {}
+    predecessor: dict[str, str | None] = {}
     while ready:
-        event_id = ready.popleft()
+        event_id = heapq.heappop(ready)
         event = graph.by_id[event_id]
-        completion[event_id] = float(event.duration) + max(
-            (completion[dependency] for dependency in event.dependencies),
-            default=0.0,
-        )
+        if event.dependencies:
+            predecessor_end = max(
+                completion[dependency]
+                for dependency in event.dependencies
+            )
+            predecessor_id = min(
+                dependency
+                for dependency in event.dependencies
+                if completion[dependency] == predecessor_end
+            )
+        else:
+            predecessor_end = 0.0
+            predecessor_id = None
+        completion[event_id] = float(event.duration) + predecessor_end
+        predecessor[event_id] = predecessor_id
         for successor in graph.successors[event_id]:
             indegrees[successor] -= 1
             if indegrees[successor] == 0:
-                ready.append(successor)
-    return max(completion.values())
+                heapq.heappush(ready, successor)
+
+    end_id = min(
+        completion,
+        key=lambda event_id: (-completion[event_id], event_id),
+    )
+    path = []
+    current_id: str | None = end_id
+    while current_id is not None:
+        path.append(current_id)
+        current_id = predecessor[current_id]
+    path.reverse()
+    return completion[end_id], tuple(path)

@@ -4,6 +4,7 @@
 
 | Date | Summary of Changes |
 |---|---|
+| 2026-07-20 | Added reservation-normalized SafeBound demand, explicit greedy no-progress, and graph-validation timing boundaries. |
 | 2026-07-20 | Added Phase-1 checkpoint, calibration-use separation, held-out prediction freeze, modeled-universal quantifier, and approved comparator lock gates. |
 | 2026-07-20 | Added the manifest-order cache-domain gate after rejecting an unsafe isolated-cache lower-bound recommendation. |
 | 2026-07-20 | Added lifetime-progress and scheduler-complexity-accounting gates after reconciling the shared execution-kernel review. |
@@ -30,7 +31,7 @@
 10. **Exactness Gate:** Any “exact” result equals the modeled optimum for every accepted input in its declared domain; complexity/domain limits fail fast.
 11. **Order-Invariance Gate:** Permuting semantically equivalent Event input does not alter any public exact or safe-bound result.
 12. **Safety Gate:** Every scalable bound is proven no greater than the exact modeled optimum for the accepted model domain.
-13. **Scheduler-Feasibility Gate:** Every scheduler output respects dependency, capacity, lifetime, simultaneous-demand, and affinity constraints.
+13. **Scheduler-Feasibility Gate:** Every returned scheduler output respects dependency, capacity, lifetime, simultaneous-demand, and affinity constraints. Explicit no-progress is permitted for the fixed greedy policy but must not be mislabeled as a proof that the graph is infeasible.
 14. **Scheduler-Policy Gate:** Determinism and compatibility are tested against the accepted policy; caller list order cannot be an undocumented policy input.
 15. **Scheduler-Performance Gate:** Complexity claims use measured wall-clock runtime across declared graph sizes and report absolute event/edge counts.
 
@@ -79,8 +80,8 @@
 50. **Search-Coverage Gate:** A built-in enumerator is exact only after proving that its generated schedules cover at least one optimum for every accepted input and after complete-search evidence is returned.
 51. **Launch-Metadata Gate:** Split factor, persistent grouping, work assignment, and reduction topology come from authoritative explicit metadata; `is_split_k`, CTA ratios, or shape heuristics may not be used as a fallback reconstruction.
 52. **Report-Provenance Gate:** Dependency critical path, exact optimum, analytical bound, feasible-schedule makespan, and measured comparison remain separately named report quantities; multi-resource busy time is demand-weighted resource time rather than one unqualified duration sum.
-53. **Lifetime-Progress Gate:** Lifetime-held occupancy and transient execution demand are distinct. Members consume held resources only from their own sufficient reservation, transient demands are atomic and event-local, and no accepted state can create hold-and-wait across lifetimes.
-54. **Scheduler-Complexity-Accounting Gate:** Graph/queue complexity and multi-resource placement complexity are reported separately. No total asymptotic claim may omit blocked-ready rescans, eligible-SM checks, lifetime admission, or actual measured runtime.
+53. **Lifetime-Progress Gate:** Lifetime-held occupancy and transient execution demand are distinct. Members consume held resources only from their own sufficient reservation; SafeBound and scheduler share the same reservation normalization; additional transient demands remain atomic and event-local; cross-lifetime member hold-and-wait is rejected; and greedy-policy no-progress raises explicitly rather than stalling or returning a partial schedule.
+54. **Scheduler-Complexity-Accounting Gate:** Graph construction/validation, scheduler graph/queue work, multi-resource placement, and report assembly are reported separately. No total asymptotic claim may omit per-member lifetime reachability, blocked-ready wakes, eligible-SM checks, lifetime admission, or actual measured runtime.
 55. **Static-Cache-Domain Gate:** Cache resolution, exact optimum, SafeBound, and feasible scheduling consume one identical manifest-order fixed-state model. Its theorem is labeled as abstract modeled evidence and is never generalized to arbitrary hardware interleavings; an overcounting cache alternative cannot be called lower-bound-safe.
 
 ## Claim Status Vocabulary
