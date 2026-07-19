@@ -4,6 +4,14 @@
 
 | Date | Summary of Changes |
 |---|---|
+| 2026-07-20 | Passed the first exact-path/index-hash staging audit and advanced to final re-stage plus Lore delivery. |
+| 2026-07-20 | Passed the fresh focused/full/proof/static pre-staging gate and advanced Wave 4 to exact-path staging. |
+| 2026-07-20 | Passed the final Wave-4 delivery-package Claude gate with APPROVE/READY and advanced to fresh verification plus exact-path staging. |
+| 2026-07-20 | Passed the Wave-4 post-implementation Claude gate, closed its two actionable coverage WATCH items, and advanced to full verification and delivery. |
+| 2026-07-20 | Passed the Wave-4 lowering pre-implementation Claude gate, froze its four corrections, and added the hardware-adapter RED owner to the focused command. |
+| 2026-07-20 | Passed the Wave-4 manifest-module Claude gate, closed its two meaningful coverage findings, and advanced to operator/hardware/validator lowering. |
+| 2026-07-20 | Passed the Wave-4 cache-module Claude gate, closed both LOW coverage findings, and advanced to `GemmLaunchManifest` TDD. |
+| 2026-07-20 | Delivered Wave 3 at commit `0a733ec597056924f9c10236071eb6892550080d`, verified remote equality, and advanced execution to Wave 4. |
 | 2026-07-20 | Passed the Wave-3 pre-implementation Claude gate and reconciled scheduler/report ownership, counters, report provenance, and benchmark paths. |
 | 2026-07-20 | Closed the fresh Wave-2 handoff gate and advanced execution to Wave-3 scheduler/report TDD. |
 | 2026-07-20 | Passed the Wave-2 Claude proof-layer gate with APPROVE; only fresh handoff verification remains before Wave 3. |
@@ -23,8 +31,8 @@
 ## Status
 
 - Overall: In progress.
-- Current phase: Phase 2 Wave 3 — feasible scheduler and report TDD.
-- Production code: Waves 1–2 are complete and independently approved; Wave 3 is active.
+- Current phase: Phase 2 Wave 4 — final index audit, Lore commit, push, and remote-equality verification.
+- Production code: Waves 1–3 are committed and pushed; all Wave-4 cache, manifest, operator, hardware, FA, and validator changes are implemented and independently approved. No Wave-5 work begins until the Wave-4 regression, artifact, commit, push, and remote-equality gates pass.
 
 ## Phase 1 — Plan, Discuss, and Design
 
@@ -169,7 +177,8 @@ Focused command:
 ```bash
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD" python -m pytest -p no:cacheprovider \
   tests/unit/test_cache.py tests/unit/test_gemm_manifest.py \
-  tests/unit/test_gemm_validation.py tests/integration/test_gemm_v2_simulation.py \
+  tests/unit/test_hardware_adapter.py tests/unit/test_gemm_validation.py \
+  tests/integration/test_gemm_v2_simulation.py \
   tests/integration/test_fa_simulation.py tests/integration/test_operator_simulation.py -q
 ```
 

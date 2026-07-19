@@ -4,6 +4,13 @@
 
 | Date | Summary of Changes |
 |---|---|
+| 2026-07-20 | Resolved FSV-033 by excluding Python `__future__` compiler directives from the final unused-import audit. |
+| 2026-07-20 | Reconciled FSV-002 through FSV-006 and FSV-013 with the delivered Wave-1–4 modeled implementation while retaining measured/data evidence gaps. |
+| 2026-07-20 | Resolved the final Wave-4 added-line length failure at its single test-expression owner and restored the complete static gate. |
+| 2026-07-20 | Closed FSV-031 after the Wave-4 tests-only migration produced a clean 145-case behavior RED with zero collection/setup errors. |
+| 2026-07-20 | Recorded the Wave-4 focused-suite collection failure as the expected legacy-test migration boundary and prohibited a compatibility shim. |
+| 2026-07-20 | Extended FSV-022 with the Wave-4 added-line path-filtering wrapper defect and corrected five-file evidence. |
+| 2026-07-20 | Reapplied the resolved diff-scoped static-audit rule during Wave 4 and recorded the multi-file `python -m ast` wrapper error. |
 | 2026-07-20 | Resolved generated benchmark CSV CRLF output at its unique writer and added a focused LF regression test. |
 | 2026-07-20 | Closed the Wave-3 scheduler measurement obligation and recorded the historical-runtime provenance WATCH. |
 | 2026-07-20 | Resolved the lifetime-covered SafeBound safety violation, documented greedy-policy no-progress, and opened the lifetime-validation complexity WATCH. |
@@ -36,40 +43,40 @@
 
 ### FSV-002 — Universal modeled theorem and universal hardware claim are not separated in the request
 
-- **Status:** Design resolved; proof and empirical audit pending.
+- **Status:** Modeled proof implemented and validated; final modeled and empirical audits pending.
 - **Root cause:** Event-model proofs quantify over declared abstractions; real hardware contains behavior outside that abstraction and requires matched empirical evidence.
 - **Impact:** The requested universal lower-bound claim could otherwise overstate evidence.
 - **Resolution:** The universal theorem quantifies only over a finite normalized fixed-duration EventGraph with explicit dependencies, declared global/per-SM capacities, and one manifest-order resolved cache state. Affinity and lifetime reservations may be removed only as named relaxations. Real hardware receives a separate finite empirical audit that reports every violation and makes no universal claim.
 
 ### FSV-003 — Current Event IR cannot express requested execution semantics
 
-- **Status:** Design resolved; implementation pending.
+- **Status:** Resolved in Waves 1–4 on 2026-07-20.
 - **Root cause:** An Event owns at most one `resource` and has no simultaneous demand, CTA lifetime, affinity, cache state, persistent grouping, or split-K metadata.
 - **Impact:** Items 4–8 cannot be represented or tested faithfully.
-- **Resolution:** Use one immutable Event specification, one normalized EventGraph, one ScheduleEntry result, one ResourceLifetime reservation, and one two-level ResourceConfig. The exact oracle, SafeBound, scheduler, and report share that boundary; no duplicate graph or resource validator is permitted.
+- **Resolution:** Implemented one immutable Event specification, one normalized EventGraph, one ScheduleEntry result, one ResourceLifetime reservation, and one two-level ResourceConfig. The exact oracle, SafeBound, scheduler, report, cache/manifest lowerer, and FA path share that boundary; the full repository passes `400/400` tests with no duplicate graph or resource validator.
 
 ### FSV-004 — Current scheduler is order-sensitive and approximately quadratic
 
-- **Status:** Design resolved; TDD rewrite and measurement pending.
+- **Status:** Resolved for the declared deterministic feasible policy; historical performance provenance remains WATCH.
 - **Root cause:** The greedy scheduler repeatedly scans the caller-provided Event list and schedules the first ready item.
 - **Evidence:** The same DAG yields makespans `21.0` and `11.0` under two input orders; historical `58,467`-event runtime was `115.882818766s`.
 - **Impact:** It is not a public bound and is unsuitable for large design-space claims.
-- **Resolution:** Use descending remaining dependency-path duration with `event_id` tie-break, explicit dependencies only, atomic placement, and separately instrument graph/heap work, ready scans, placement checks, and wall-clock runtime. No unsupported total asymptotic claim is accepted.
+- **Resolution:** Implemented descending remaining dependency-path duration with `event_id` tie-break, explicit dependencies only, atomic placement, blocker-indexed wakeups, and separate graph/scheduler/report timing. The `58,467`-Event primary pipeline measured `24.404565954988s` versus the historical `115.882818766s`, labeled only as a size-matched historical ratio because stages and host provenance are not controlled. No unsupported total asymptotic or cycle-level claim is made.
 
 ### FSV-005 — Cache/residency contract is absent
 
-- **Status:** Design resolved; implementation and matched evidence pending.
+- **Status:** Modeled implementation resolved; matched measured evidence pending.
 - **Root cause:** Current lowering uses aggregate cold traffic and has no literal cache state, transition, capacity, or eviction model.
 - **Impact:** Warm-L2 causes cannot be asserted, and monotonic/traffic-conservation reasoning is incomplete.
-- **Resolution:** Use one fully associative, size-aware, deterministic LRU HBM+abstract-L2 model over a canonical manifest access order, with explicit initial recency/dirty state and output visibility. It is manifest-order modeled evidence, not a hardware-universal cache theorem.
+- **Resolution:** Implemented one fully associative, size-aware, deterministic LRU HBM+abstract-L2 model over the canonical manifest access order, with explicit initial recency/dirty state and output visibility. Cache and lowering tests report zero HBM/L2 byte-conservation delta, including warm state and L2/HBM visibility. It remains manifest-order modeled evidence, not a hardware-universal cache theorem; Wave 5 owns matched counter evidence.
 
 ### FSV-006 — Persistent CTA, split-K, and partial-tile metadata are unmatched
 
-- **Status:** Design resolved; authoritative manifests and implementation pending.
+- **Status:** Modeled implementation resolved for explicit authoritative manifests; dataset manifest coverage and evaluation pending.
 - **Root cause:** Current lowering does not consume full measured launch-policy semantics; `tile_k` is behaviorally inert, split-K replication/reduction is absent, and partial tiles count useful work only.
 - **Evidence:** Historical H100 coverage supported `4,246/10,800` rows; `6,554/10,800` had CTA mismatch; all `437/437` split-K rows were unsupported. Across the full split-K dataset, CTA ratios do not uniquely recover a split factor: H100/H200/H800 have non-integer ratios from `1.178571` to `4.137931`, H20 has `85` rows below the base CTA grid and a minimum ratio of `0.131313`, and several other targets have thousands of rows with `cta_count == base_ctas` despite `is_split_k=1`. For non-split Hopper rows, `tensor_all_ops` equals a simple padded-tile formula in H100 `9,366/10,363`, H20 `9,202/9,534`, H200 `9,358/10,392`, and H800 `9,379/10,343`, but p95 padded ratios above `1.0` remain on three targets.
 - **Impact:** Structural comparisons cannot claim matched execution.
-- **Resolution:** `GemmLaunchManifest` is the sole new-path policy source. Worker assignment expresses persistent CTAs; explicit K partitions and accumulator topology express split-K; logical and issued extents derive useful and physical work. Rows without authoritative manifests are counted and rejected.
+- **Resolution:** `GemmLaunchManifest` is the implemented sole new-path policy source. Worker assignment expresses persistent CTAs; explicit K partitions and accumulator topology express split-K; logical and issued extents derive useful and physical work; lowering gives every Worker one lifetime and keeps reductions outside lifetimes. Rows without authoritative manifests are counted and rejected. Wave 5 must provision real row-indexed manifests before dataset validation; heuristic reconstruction remains prohibited.
 
 ### FSV-007 — No matched cycle-accurate comparator exists in the repository
 
@@ -117,10 +124,10 @@
 
 ### FSV-013 — Implicit stream order is caller-order semantics
 
-- **Status:** Design resolved; migration tests pending.
+- **Status:** Resolved in Waves 1–4 on 2026-07-20.
 - **Root cause:** `scheduler._validated_dependencies()` adds each stream predecessor while iterating the caller-provided Event sequence, and `test_same_stream_events_keep_input_order_without_explicit_dependencies` locks that behavior.
 - **Impact:** A certified dependency-DAG bound cannot claim input-permutation invariance while silently deriving different DAG edges from permutation.
-- **Resolution:** Remove `stream_ordered` and iterable-derived stream edges from the new EventGraph path. Workload composition emits explicit prior-completion-to-next-launch dependencies. The old compatibility test becomes a RED migration test for caller-order invariance rather than an adapter requirement.
+- **Resolution:** Removed `stream_ordered` and iterable-derived stream edges from the EventGraph path. Lowerers emit explicit dependencies, `stream_id` is metadata only, and reversed Event tuples produce identical schedule entries and makespan in GEMM/FA tests. No compatibility adapter was added.
 
 ### FSV-014 — Exactness needs a complete optimality certificate
 
@@ -185,7 +192,7 @@
 - **Status:** Resolved on 2026-07-20.
 - **Root cause:** A fresh helper scanned every line in files touched by Wave 1, while the recorded acceptance metric concerns newly added Python lines. Two long import lines in `event_simulator/__init__.py` already existed at `HEAD` and were therefore incorrectly attributed to this wave.
 - **Impact:** The combined verification wrapper exited `1` even though `76/76` tests and `git diff --check` passed; treating that result as a production failure would trigger unrelated formatting work.
-- **Resolution:** Compare only added Python lines from `git diff --unified=0`. The corrected audit reports `0` newly added lines over 88 characters. No code was reformatted, no exception was added, and the failed helper plus resolution are preserved in the Wave-1 test report.
+- **Resolution:** Compare only added Python lines from `git diff --unified=0`. The corrected audit reports `0` newly added lines over 88 characters. No code was reformatted, no exception was added, and the failed helper plus resolution are preserved in the Wave-1 test report. During Wave 4, one wrapper also invoked `python -m ast` with three paths even though that CLI accepts one input, then repeated the already-rejected whole-file length scope. A later wrapper inspected diff additions but failed to track the `+++ b/<path>` header, so long Markdown additions were misclassified as Python. The corrected parser uses `ast.parse` per file and checks added lines only while the current diff path ends in `.py`; `5/5` files parsed and the added-Python-line violation count remained `0`.
 
 ### FSV-023 — Per-SM proof-boundary review contained an incorrect SafeBound value
 
@@ -242,3 +249,24 @@
 - **Root cause:** Python's `csv.DictWriter` inherited the default Excel dialect, whose line terminator is `\r\n`. The initial untracked-text grep did not classify the carriage return as a blank character, but staged `git diff --check` correctly rejected all eight generated CSV lines as trailing whitespace.
 - **Impact:** The numeric benchmark data and tests were correct, but the authoritative raw artifact could not pass the repository delivery gate. Manually editing only the CSV would allow the unique writer to reproduce the defect later.
 - **Resolution:** Added an observed RED test that runs the unique benchmark writer on the exact small case and rejects carriage returns. Set only `lineterminator="\n"` on that `csv.DictWriter`, normalized the existing eight-row artifact while asserting eight replacements and zero remaining CR bytes, and reran the module and Wave-1--3 regressions. The focused module passed `12/12`; the full checkpoint passed `205/205`; the normalized artifact SHA-256 is `13dad9670800d8362c5c16f182b48255bf26e0c86cf0986b1156fe08e6a125f5`.
+
+### FSV-031 — Wave-4 focused tests still construct the removed flat resource API
+
+- **Status:** Resolved on 2026-07-20; production compatibility remains explicitly prohibited.
+- **Root cause:** Wave 1 deliberately replaced `ResourceConfig({...})` with `ResourceConfig(global_capacities=..., sm_count=..., per_sm_capacities=...)`, while Wave-4-owned operator integration fixtures and legacy lowerers were intentionally deferred to their declared migration wave. The first Wave-4 combined command therefore fails during collection before exercising lowering behavior.
+- **Impact:** The command reports `1` collection error and exit code `2`, so it is not a valid behavior RED for operator/hardware/validator implementation. Adding a one-dict constructor shim would hide the planned API break and violate the design/harness.
+- **Resolution:** Migrated only the Wave-4 tests to the frozen two-level `EventGraph`/report and manifest-map contracts, without changing production or adding a compatibility shim. The authoritative focused command then collected `145` tests and produced `98` passes, `47` ordinary behavior failures, `0` setup errors, and `0` collection errors. The remaining failures identify only the planned production work; the old constructor and old `lower_gemm_v2` signature remain deliberately broken.
+
+### FSV-032 — One newly added manifest assertion exceeded the line-length gate
+
+- **Status:** Resolved on 2026-07-20 before staging.
+- **Root cause:** The first final diff-scoped audit correctly measured a one-line generator-expression assertion in `tests/unit/test_gemm_manifest.py` at 90 characters, two above the accepted 88-character limit.
+- **Impact:** Behavioral tests and production logic passed, but the Wave-4 delivery gate could not pass while the new test line violated the recorded style criterion.
+- **Resolution:** Wrapped only the generator expression at its test owner without changing the assertion or production behavior. The exact focused test passed `1/1`; the complete static rerun parsed `14/14` changed/new Python files, found `0` added Python lines over 88 characters, and passed `git diff --check`. No formatter dependency, exception, fallback, or adjacent reformat was introduced.
+
+### FSV-033 — Final unused-import audit treated a compiler directive as a runtime symbol
+
+- **Status:** Resolved on 2026-07-20 before staging.
+- **Root cause:** The inline AST checker collected every `ImportFrom` binding but detected usage only through loaded `Name` nodes. `from __future__ import annotations` changes compiler behavior and does not create a runtime use of the bound word `annotations`, so the checker produced a false positive.
+- **Impact:** The first final static command exited before the downstream legacy/history/diff checks even though `operators.py` had no actual unused runtime import. Editing production to satisfy the faulty checker would have removed intentional annotation semantics.
+- **Resolution:** Excluded only imports whose module is `__future__` from the unused-runtime-symbol audit and reran the complete gate. Actual unused imports are `0`; all `14/14` Python files parse; added lines over 88, forbidden hits, and diff errors are `0`; signature match is `1`; histories pass `19/19`. No repository source or test was changed for this checker-only defect.

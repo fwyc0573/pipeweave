@@ -1,200 +1,578 @@
-"""Integration tests for lower_gemm_v2 structural decomposition."""
+"""Integration tests for authoritative GEMM manifest lowering."""
+
+from inspect import Parameter, signature
 
 import pytest
 
 from event_simulator import (
-    PrimitiveCalibration,
+    CacheAccess,
+    CacheBlock,
+    CacheConfig,
+    EventGraph,
+    GemmLaunchManifest,
+    GemmReductionStep,
+    GemmWorkItem,
+    GemmWorker,
+    InitialCacheState,
+    ResidentCacheBlock,
     ResourceConfig,
     build_report,
-    lower_gemm_v2,
-    load_hardware_config,
     derive_calibration,
-    derive_resource_config,
+    load_hardware_config,
+    lower_gemm_v2,
     schedule,
 )
-from event_simulator.hardware_adapter import HardwareConfig
 
 
 @pytest.fixture
-def h100_hw():
-    return load_hardware_config("hardware/H100.json")
+def h100_calibration():
+    return derive_calibration(load_hardware_config("hardware/H100.json"))
 
 
-@pytest.fixture
-def h100_cal(h100_hw):
-    return derive_calibration(h100_hw)
+def _resources() -> ResourceConfig:
+    return ResourceConfig(
+        global_capacities={
+            "hbm_bandwidth": 1,
+            "l2_bandwidth": 1,
+            "launch": 1,
+        },
+        sm_count=2,
+        per_sm_capacities={
+            "alu": 1,
+            "cta_slots": 1,
+            "tensor_core": 1,
+        },
+    )
 
 
-@pytest.fixture
-def h100_rc(h100_hw):
-    return derive_resource_config(h100_hw, operator_type="gemm_v2")
+def _block(object_id: str, index: int) -> CacheBlock:
+    return CacheBlock(object_id=object_id, block_index=index, size_bytes=4)
 
 
-class TestGemmV2WaveSplit:
-    """Verify CTA admission events are correctly split into full/tail wave."""
+def _ordinary_manifest() -> GemmLaunchManifest:
+    a = _block("A", 0)
+    b = _block("B", 0)
+    c = _block("C", 0)
+    return GemmLaunchManifest(
+        m=4,
+        n=4,
+        k=4,
+        a_element_bytes=2,
+        b_element_bytes=2,
+        output_element_bytes=2,
+        accumulator_bytes=4,
+        tile_m=4,
+        tile_n=4,
+        tile_k=4,
+        output_visibility="L2",
+        resource_config=_resources(),
+        cache_config=CacheConfig(
+            capacity_bytes=8,
+            block_bytes=4,
+            blocks=(a, b, c),
+        ),
+        workers=(
+            GemmWorker(
+                worker_id="worker-0",
+                work_item_ids=("item-0",),
+                per_sm_reservation={"cta_slots": 1},
+                eligible_sms=frozenset({0}),
+            ),
+        ),
+        work_items=(
+            GemmWorkItem(
+                work_item_id="item-0",
+                output_m=0,
+                output_n=0,
+                logical_m=4,
+                logical_n=4,
+                k_start=0,
+                k_end=4,
+                issued_m=8,
+                issued_n=8,
+                issued_k=8,
+                accumulator_id="acc-0",
+                cache_access_indices=(0, 1, 2),
+            ),
+        ),
+        reduction_steps=(),
+        cache_accesses=(
+            CacheAccess(a, "read"),
+            CacheAccess(b, "read"),
+            CacheAccess(c, "overwrite", is_output=True),
+        ),
+    )
 
-    def test_exact_wave_all_full(self, h100_hw, h100_cal, h100_rc):
-        # 132 CTAs = exactly 1 wave on 132 SMs → all full, no tail
-        events = lower_gemm_v2(
-            "gemm-exact", m=1024, n=1024, k=256,
-            tile_m=128, tile_n=128, calibration=h100_cal, hardware=h100_hw,
+
+def _persistent_manifest() -> GemmLaunchManifest:
+    blocks = tuple(
+        _block(object_id, index)
+        for object_id, index in (
+            ("A", 0),
+            ("B", 0),
+            ("C", 0),
+            ("A", 1),
+            ("B", 1),
+            ("C", 1),
         )
-        admission_types = [e.event_type for e in events if "Admission" in e.event_type]
-        # 8x8 = 64 CTAs, all in tail wave (64 < 132)
-        # Actually 64 < 132 so it's all tail wave
-        assert all(t == "CTAAdmission_TailWave" for t in admission_types)
+    )
+    return GemmLaunchManifest(
+        m=4,
+        n=8,
+        k=4,
+        a_element_bytes=2,
+        b_element_bytes=2,
+        output_element_bytes=2,
+        accumulator_bytes=4,
+        tile_m=4,
+        tile_n=4,
+        tile_k=4,
+        output_visibility="L2",
+        resource_config=_resources(),
+        cache_config=CacheConfig(
+            capacity_bytes=24,
+            block_bytes=4,
+            blocks=blocks,
+        ),
+        workers=(
+            GemmWorker(
+                worker_id="worker-0",
+                work_item_ids=("item-0", "item-1"),
+                per_sm_reservation={"cta_slots": 1},
+                eligible_sms=frozenset({1}),
+            ),
+        ),
+        work_items=(
+            GemmWorkItem(
+                work_item_id="item-0",
+                output_m=0,
+                output_n=0,
+                logical_m=4,
+                logical_n=4,
+                k_start=0,
+                k_end=4,
+                issued_m=4,
+                issued_n=4,
+                issued_k=4,
+                accumulator_id="acc-0",
+                cache_access_indices=(0, 1, 2),
+            ),
+            GemmWorkItem(
+                work_item_id="item-1",
+                output_m=0,
+                output_n=4,
+                logical_m=4,
+                logical_n=4,
+                k_start=0,
+                k_end=4,
+                issued_m=4,
+                issued_n=4,
+                issued_k=4,
+                accumulator_id="acc-1",
+                cache_access_indices=(3, 4, 5),
+            ),
+        ),
+        reduction_steps=(),
+        cache_accesses=(
+            CacheAccess(blocks[0], "read"),
+            CacheAccess(blocks[1], "read"),
+            CacheAccess(blocks[2], "overwrite", is_output=True),
+            CacheAccess(blocks[3], "read"),
+            CacheAccess(blocks[4], "read"),
+            CacheAccess(blocks[5], "overwrite", is_output=True),
+        ),
+    )
 
-    def test_multiple_waves_has_tail(self, h100_hw, h100_cal, h100_rc):
-        # 4096x4096 with 128x128 = 1024 CTAs
-        # 1024 / 132 = 7 full waves (924) + tail (100)
-        events = lower_gemm_v2(
-            "gemm-waves", m=4096, n=4096, k=256,
-            tile_m=128, tile_n=128, calibration=h100_cal, hardware=h100_hw,
+
+def _split_k_manifest() -> GemmLaunchManifest:
+    catalog = tuple(
+        _block(object_id, index)
+        for object_id, index in (
+            ("A", 0),
+            ("B", 0),
+            ("partial", 0),
+            ("A", 1),
+            ("B", 1),
+            ("partial", 1),
+            ("C", 0),
         )
-        full_count = sum(1 for e in events if e.event_type == "CTAAdmission_FullWave")
-        tail_count = sum(1 for e in events if e.event_type == "CTAAdmission_TailWave")
-        assert full_count == 924
-        assert tail_count == 100
+    )
+    by_identity = {block.identity: block for block in catalog}
+    accesses = (
+        CacheAccess(by_identity[("A", 0)], "read"),
+        CacheAccess(by_identity[("B", 0)], "read"),
+        CacheAccess(by_identity[("partial", 0)], "overwrite"),
+        CacheAccess(by_identity[("A", 1)], "read"),
+        CacheAccess(by_identity[("B", 1)], "read"),
+        CacheAccess(by_identity[("partial", 1)], "overwrite"),
+        CacheAccess(by_identity[("partial", 0)], "read"),
+        CacheAccess(by_identity[("partial", 1)], "read"),
+        CacheAccess(by_identity[("C", 0)], "overwrite", is_output=True),
+    )
+    return GemmLaunchManifest(
+        m=4,
+        n=4,
+        k=8,
+        a_element_bytes=2,
+        b_element_bytes=2,
+        output_element_bytes=2,
+        accumulator_bytes=4,
+        tile_m=4,
+        tile_n=4,
+        tile_k=4,
+        output_visibility="HBM",
+        resource_config=_resources(),
+        cache_config=CacheConfig(
+            capacity_bytes=16,
+            block_bytes=4,
+            blocks=catalog,
+        ),
+        workers=(
+            GemmWorker(
+                worker_id="worker-0",
+                work_item_ids=("item-0",),
+                per_sm_reservation={"cta_slots": 1},
+                eligible_sms=frozenset({0}),
+            ),
+            GemmWorker(
+                worker_id="worker-1",
+                work_item_ids=("item-1",),
+                per_sm_reservation={"cta_slots": 1},
+                eligible_sms=frozenset({1}),
+            ),
+        ),
+        work_items=(
+            GemmWorkItem(
+                work_item_id="item-0",
+                output_m=0,
+                output_n=0,
+                logical_m=4,
+                logical_n=4,
+                k_start=0,
+                k_end=4,
+                issued_m=4,
+                issued_n=4,
+                issued_k=4,
+                accumulator_id="partial-0",
+                cache_access_indices=(0, 1, 2),
+            ),
+            GemmWorkItem(
+                work_item_id="item-1",
+                output_m=0,
+                output_n=0,
+                logical_m=4,
+                logical_n=4,
+                k_start=4,
+                k_end=8,
+                issued_m=4,
+                issued_n=4,
+                issued_k=4,
+                accumulator_id="partial-1",
+                cache_access_indices=(3, 4, 5),
+            ),
+        ),
+        reduction_steps=(
+            GemmReductionStep(
+                reduction_id="reduce-0",
+                input_accumulator_ids=("partial-0", "partial-1"),
+                output_accumulator_id="final-0",
+                logical_elements=16,
+                issued_elements=16,
+                cache_access_indices=(6, 7, 8),
+            ),
+        ),
+        cache_accesses=accesses,
+    )
 
-    def test_perfect_multiple_no_tail(self, h100_hw, h100_cal, h100_rc):
-        # Need CTA count that's exact multiple of 132
-        # 12x11 = 132 CTAs with tile 128x128 needs m=1536, n=1408
-        events = lower_gemm_v2(
-            "gemm-perfect", m=1536, n=1408, k=256,
-            tile_m=128, tile_n=128, calibration=h100_cal, hardware=h100_hw,
+
+def _lower(manifest, calibration):
+    return lower_gemm_v2(
+        "gemm",
+        manifest=manifest,
+        calibration=calibration,
+        initial_cache_state=InitialCacheState(),
+    )
+
+
+def _is_ancestor(graph: EventGraph, source: str, target: str) -> bool:
+    pending = [source]
+    visited = set()
+    while pending:
+        event_id = pending.pop()
+        if event_id == target:
+            return True
+        if event_id in visited:
+            continue
+        visited.add(event_id)
+        pending.extend(graph.successors[event_id])
+    return False
+
+
+def test_lower_gemm_v2_has_only_the_manifest_signature(h100_calibration):
+    parameters = signature(lower_gemm_v2).parameters
+
+    assert tuple(parameters) == (
+        "kernel_id",
+        "manifest",
+        "calibration",
+        "initial_cache_state",
+        "stream_id",
+    )
+    assert parameters["manifest"].kind is Parameter.KEYWORD_ONLY
+    assert parameters["initial_cache_state"].default is Parameter.empty
+    assert not {
+        "m",
+        "n",
+        "k",
+        "tile_m",
+        "tile_n",
+        "tile_k",
+        "hardware",
+        "max_ctas_per_sm",
+        "element_bytes",
+    } & set(parameters)
+
+    with pytest.raises(TypeError):
+        lower_gemm_v2(
+            "gemm",
+            manifest=_ordinary_manifest(),
+            calibration=h100_calibration,
         )
-        tail_count = sum(1 for e in events if e.event_type == "CTAAdmission_TailWave")
-        assert tail_count == 0
 
 
-class TestGemmV2MemoryModel:
-    """Verify the chip-level DRAM event correctly models effective traffic."""
+def test_lower_gemm_v2_returns_normalized_event_graph(h100_calibration):
+    graph = _lower(_ordinary_manifest(), h100_calibration)
 
-    def test_has_chip_level_dram_event(self, h100_hw, h100_cal, h100_rc):
-        events = lower_gemm_v2(
-            "gemm-dram", m=4096, n=4096, k=4096,
-            tile_m=128, tile_n=128, calibration=h100_cal, hardware=h100_hw,
+    assert isinstance(graph, EventGraph)
+    assert graph.events
+    assert {event.stream_id for event in graph.events} == {"stream-0"}
+    assert len(graph.lifetimes) == 1
+
+
+def test_cache_traffic_bytes_match_the_single_resolution(h100_calibration):
+    manifest = _split_k_manifest()
+    resolution = manifest.resolve_cache(InitialCacheState())
+    graph = _lower(manifest, h100_calibration)
+
+    assert sum(
+        event.bytes for event in graph.events if event.event_type == "HBMRead"
+    ) == resolution.hbm_read_bytes
+    assert sum(
+        event.bytes for event in graph.events if event.event_type == "HBMWrite"
+    ) == resolution.hbm_write_bytes
+    assert sum(
+        event.bytes for event in graph.events if event.event_type == "L2Read"
+    ) == resolution.l2_read_bytes
+    assert sum(
+        event.bytes for event in graph.events if event.event_type == "L2Write"
+    ) == resolution.l2_write_bytes
+
+
+def test_warm_initial_state_is_preserved_through_cache_traffic_lowering(
+    h100_calibration,
+):
+    manifest = _ordinary_manifest()
+    initial_state = InitialCacheState(
+        resident_blocks=(
+            ResidentCacheBlock(
+                manifest.cache_config.block_by_identity[("A", 0)]
+            ),
+            ResidentCacheBlock(
+                manifest.cache_config.block_by_identity[("B", 0)]
+            ),
         )
-        dram_events = [e for e in events if e.event_type == "GlobalLoad_L2Miss"]
-        assert len(dram_events) == 1
-        # Bytes should be > 0 and <= (M*K + N*K) * elem (upper bound)
-        max_bytes = (4096 * 4096 + 4096 * 4096) * 2
-        assert 0 < dram_events[0].bytes <= max_bytes
+    )
+    resolution = manifest.resolve_cache(initial_state)
+    graph = lower_gemm_v2(
+        "gemm-warm",
+        manifest=manifest,
+        calibration=h100_calibration,
+        initial_cache_state=initial_state,
+    )
 
-    def test_cold_input_traffic_counts_unique_a_and_b_once(self, h100_hw, h100_cal, h100_rc):
-        m, n, k, tile_m, tile_n = 256, 256, 512, 128, 128
-        element_bytes = 2
-        events = lower_gemm_v2(
-            "gemm-cold-inputs", m=m, n=n, k=k,
-            tile_m=tile_m, tile_n=tile_n,
-            calibration=h100_cal, hardware=h100_hw, element_bytes=element_bytes,
+    assert resolution.hbm_read_bytes == 0
+    assert sum(
+        event.bytes for event in graph.events if event.event_type == "HBMRead"
+    ) == 0
+    assert sum(
+        event.bytes for event in graph.events if event.event_type == "L2Read"
+    ) == resolution.l2_read_bytes
+
+
+def test_l2_output_visibility_emits_no_final_hbm_flush(h100_calibration):
+    graph = _lower(_ordinary_manifest(), h100_calibration)
+
+    assert not any(
+        event.event_type == "HBMWrite" and event.cta_id is None
+        for event in graph.events
+    )
+
+
+def test_clean_eviction_emits_no_resource_time_event(h100_calibration):
+    manifest = _ordinary_manifest()
+    resolution = manifest.resolve_cache(InitialCacheState())
+    assert any(
+        transition.action == "evict_clean"
+        for transition in resolution.transitions
+    )
+
+    graph = _lower(manifest, h100_calibration)
+    cache_events = tuple(
+        event
+        for event in graph.events
+        if event.event_type in {"HBMRead", "HBMWrite", "L2Read", "L2Write"}
+    )
+    expansion_size = {
+        "read_hit": 1,
+        "read_miss": 3,
+        "overwrite_hit": 1,
+        "overwrite_miss": 1,
+        "evict_clean": 0,
+        "evict_dirty": 2,
+        "flush_dirty_output": 2,
+    }
+
+    assert len(cache_events) == sum(
+        expansion_size[transition.action]
+        for transition in resolution.transitions
+    )
+    assert all(event.bytes > 0 for event in cache_events)
+
+
+def test_each_worker_owns_one_acquire_to_release_lifetime(h100_calibration):
+    manifest = _split_k_manifest()
+    graph = _lower(manifest, h100_calibration)
+    launch = next(
+        event for event in graph.events if event.event_type == "KernelLaunch"
+    )
+
+    assert len(graph.lifetimes) == len(manifest.workers)
+    for worker in manifest.workers:
+        lifetime = next(
+            item
+            for item in graph.lifetimes
+            if item.lifetime_id.endswith(worker.worker_id)
         )
-        dram_events = [e for e in events if e.event_type == "GlobalLoad_L2Miss"]
-        assert len(dram_events) == 1
-        unique_input_bytes = (m * k + n * k) * element_bytes
-        assert dram_events[0].bytes == unique_input_bytes
-
-    def test_cold_traffic_and_makespan_are_monotonic_for_fixed_policy(
-        self, h100_hw, h100_cal, h100_rc
-    ):
-        results = []
-        for m in (128, 129):
-            events = lower_gemm_v2(
-                f"gemm-monotonic-{m}",
-                m=m,
-                n=4096,
-                k=64,
-                tile_m=128,
-                tile_n=16,
-                calibration=h100_cal,
-                hardware=h100_hw,
-            )
-            dram_event = next(
-                event for event in events if event.event_type == "GlobalLoad_L2Miss"
-            )
-            results.append((dram_event.bytes, schedule(events, h100_rc).makespan))
-
-        (smaller_bytes, smaller_time), (larger_bytes, larger_time) = results
-        assert larger_bytes >= smaller_bytes
-        assert larger_time >= smaller_time
-
-    def test_always_uses_dram_bandwidth(self, h100_hw, h100_cal, h100_rc):
-        # Even for small inputs, chip-level event uses DRAM (cold miss)
-        events = lower_gemm_v2(
-            "gemm-small-k", m=4096, n=4096, k=64,
-            tile_m=128, tile_n=128, calibration=h100_cal, hardware=h100_hw,
+        acquire = graph.by_id[lifetime.acquire_event_id]
+        release = graph.by_id[lifetime.release_event_id]
+        assert lifetime.per_sm_reservation == worker.per_sm_reservation
+        assert lifetime.eligible_sms == worker.eligible_sms
+        assert acquire.duration == 0.0
+        assert acquire.dependencies == (launch.event_id,)
+        assert release.duration == 0.0
+        assert release.dependencies
+        assert all(
+            event.eligible_sms is None
+            for event in graph.events
+            if event.lifetime_id == lifetime.lifetime_id
         )
-        mem_events = [e for e in events if "GlobalLoad" in e.event_type]
-        assert len(mem_events) == 1
-        assert mem_events[0].event_type == "GlobalLoad_L2Miss"
 
 
-class TestGemmV2TileSplit:
-    """Verify MMA events are correctly classified as full/partial."""
+def test_persistent_worker_preserves_work_item_order(h100_calibration):
+    graph = _lower(_persistent_manifest(), h100_calibration)
+    first = tuple(
+        event for event in graph.events if event.cta_id == "item-0"
+    )
+    second = tuple(
+        event for event in graph.events if event.cta_id == "item-1"
+    )
 
-    def test_perfect_tiling_all_full(self, h100_hw, h100_cal, h100_rc):
-        # 256x256 with 128x128 → all tiles are full
-        events = lower_gemm_v2(
-            "gemm-full", m=256, n=256, k=256,
-            tile_m=128, tile_n=128, calibration=h100_cal, hardware=h100_hw,
-        )
-        full = sum(1 for e in events if e.event_type == "MMA_FullTile")
-        partial = sum(1 for e in events if e.event_type == "MMA_PartialTile")
-        assert full == 4
-        assert partial == 0
-
-    def test_imperfect_tiling_has_partial(self, h100_hw, h100_cal, h100_rc):
-        # 300x300 with 128x128 → 3x3=9 tiles, 4 full + 5 partial
-        events = lower_gemm_v2(
-            "gemm-partial", m=300, n=300, k=256,
-            tile_m=128, tile_n=128, calibration=h100_cal, hardware=h100_hw,
-        )
-        full = sum(1 for e in events if e.event_type == "MMA_FullTile")
-        partial = sum(1 for e in events if e.event_type == "MMA_PartialTile")
-        assert full == 4
-        assert partial == 5
+    assert first
+    assert second
+    assert any(
+        _is_ancestor(graph, source.event_id, target.event_id)
+        for source in first
+        for target in second
+    )
+    assert not any(
+        _is_ancestor(graph, source.event_id, target.event_id)
+        for source in second
+        for target in first
+    )
 
 
-class TestGemmV2Scheduling:
-    """Verify the scheduled result is sane and exploits parallelism."""
+def test_mma_count_uses_physical_issued_work(h100_calibration):
+    manifest = _ordinary_manifest()
+    graph = _lower(manifest, h100_calibration)
+    mma = next(event for event in graph.events if event.event_type == "MMA")
+    work_item = manifest.work_items[0]
 
-    def test_makespan_less_than_serial(self, h100_hw, h100_cal, h100_rc):
-        events = lower_gemm_v2(
-            "gemm-par", m=4096, n=4096, k=4096,
-            tile_m=128, tile_n=128, calibration=h100_cal, hardware=h100_hw,
-        )
-        result = schedule(events, h100_rc)
-        # Serial time = sum of all event durations
-        serial_time = sum(e.duration for e in events)
-        # With shared DRAM bandwidth (1 lane), memory events serialize.
-        # But compute (132 lanes) parallelizes. Makespan should still be
-        # significantly less than fully serial (at least 2x speedup).
-        assert result.makespan < serial_time * 0.5
+    assert work_item.logical_work == 128
+    assert work_item.physical_issued_work == 1024
+    assert mma.instruction_count == 4
+    assert mma.duration == h100_calibration.duration("MMA", 4)
 
-    def test_report_has_meaningful_breakdown(self, h100_hw, h100_cal, h100_rc):
-        events = lower_gemm_v2(
-            "gemm-report", m=2048, n=2048, k=2048,
-            tile_m=128, tile_n=128, calibration=h100_cal, hardware=h100_hw,
-        )
-        result = schedule(events, h100_rc)
-        report = build_report(result)
-        assert report.makespan > 0
-        assert report.resource_busy_time["tensor_core"] > 0
-        # Memory may use L2 or DRAM path depending on size
-        mem_busy = report.resource_busy_time.get("dram_bandwidth", 0) + report.resource_busy_time.get("l2_bandwidth", 0)
-        assert mem_busy > 0
-        assert len(report.critical_path_event_ids) >= 3
 
-    def test_dependencies_are_respected(self, h100_hw, h100_cal, h100_rc):
-        events = lower_gemm_v2(
-            "gemm-deps", m=256, n=256, k=256,
-            tile_m=128, tile_n=128, calibration=h100_cal, hardware=h100_hw,
-        )
-        result = schedule(events, h100_rc)
-        by_id = result.by_id()
-        # MMA must start after all its load dependencies complete
-        for e in result.events:
-            if "mma" in e.event_id:
-                for dep_id in e.dependencies:
-                    dep = by_id[dep_id]
-                    assert e.start_time >= dep.end_time
+def test_split_k_reduction_waits_for_worker_releases(h100_calibration):
+    graph = _lower(_split_k_manifest(), h100_calibration)
+    reduction = next(
+        event for event in graph.events if event.event_type == "Reduction"
+    )
+    release_ids = {
+        lifetime.release_event_id for lifetime in graph.lifetimes
+    }
+
+    assert reduction.lifetime_id is None
+    assert reduction.eligible_sms is None
+    assert dict(reduction.per_sm_demand) == {"alu": 1}
+    assert all(
+        _is_ancestor(graph, release_id, reduction.event_id)
+        for release_id in release_ids
+    )
+    assert all(
+        event.lifetime_id is None
+        for event in graph.events
+        if event.cta_id == "reduce-0"
+    )
+
+
+def test_output_flush_is_an_explicit_completion_predecessor(h100_calibration):
+    graph = _lower(_split_k_manifest(), h100_calibration)
+    completion = next(
+        event for event in graph.events if event.event_type == "KernelComplete"
+    )
+    flush_writes = tuple(
+        event
+        for event in graph.events
+        if event.event_type == "HBMWrite" and event.cta_id is None
+    )
+
+    assert flush_writes
+    assert {event.event_id for event in flush_writes} <= set(
+        completion.dependencies
+    )
+
+
+def test_manifest_graph_schedules_and_reports_provenance(h100_calibration):
+    manifest = _split_k_manifest()
+    graph = _lower(manifest, h100_calibration)
+    result = schedule(graph, manifest.resource_config)
+    report = build_report(result)
+
+    assert result.graph is graph
+    assert report.feasible_makespan == result.makespan
+    assert 0.0 < report.dependency_critical_path <= report.feasible_makespan
+    assert report.dependency_critical_path_event_ids
+    assert report.resource_busy_time["hbm_bandwidth"] > 0.0
+    assert report.resource_busy_time["l2_bandwidth"] > 0.0
+    assert report.resource_busy_time["tensor_core"] > 0.0
+    assert report.resource_busy_time["alu"] > 0.0
+    assert not hasattr(report, "makespan")
+    assert not hasattr(report, "critical_path")
+
+
+def test_manifest_graph_schedule_is_invariant_to_event_tuple_order(
+    h100_calibration,
+):
+    manifest = _split_k_manifest()
+    graph = _lower(manifest, h100_calibration)
+    permuted = EventGraph(
+        events=tuple(reversed(graph.events)),
+        lifetimes=tuple(reversed(graph.lifetimes)),
+    )
+
+    original = schedule(graph, manifest.resource_config)
+    reordered = schedule(permuted, manifest.resource_config)
+
+    assert reordered.makespan == original.makespan
+    assert reordered.entries == original.entries

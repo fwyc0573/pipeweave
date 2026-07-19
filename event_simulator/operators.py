@@ -1,16 +1,14 @@
 from __future__ import annotations
 
 from math import ceil
+from typing import Mapping
 
-from .events import Event
+from .cache import CacheTransition, InitialCacheState
+from .events import Event, EventGraph
+from .gemm_manifest import GemmLaunchManifest
 from .hardware_adapter import HardwareConfig
-from .resources import PrimitiveCalibration
-from .structural import (
-    ceil_div,
-    compute_actual_tile_dims,
-    compute_wave_split,
-    is_edge_tile,
-)
+from .resources import PrimitiveCalibration, ResourceLifetime
+from .structural import ceil_div
 
 
 def _positive_integer(name: str, value: int) -> None:
@@ -23,28 +21,32 @@ def _event(
     event_type: str,
     kernel_id: str,
     stream_id: str,
-    resource: str,
     calibration: PrimitiveCalibration,
     *,
     quantity: int = 1,
     cta_id: str | None = None,
     dependencies: tuple[str, ...] = (),
+    global_demand: Mapping[str, int] | None = None,
+    per_sm_demand: Mapping[str, int] | None = None,
+    eligible_sms: frozenset[int] | None = None,
+    lifetime_id: str | None = None,
     bytes: int = 0,
     instruction_count: int = 0,
-    stream_ordered: bool = False,
 ) -> Event:
     return Event(
         event_id=event_id,
         event_type=event_type,
         kernel_id=kernel_id,
         stream_id=stream_id,
-        resource=resource,
         duration=calibration.duration(event_type, quantity),
         cta_id=cta_id,
         dependencies=dependencies,
+        global_demand={} if global_demand is None else global_demand,
+        per_sm_demand={} if per_sm_demand is None else per_sm_demand,
+        eligible_sms=eligible_sms,
+        lifetime_id=lifetime_id,
         bytes=bytes,
         instruction_count=instruction_count,
-        stream_ordered=stream_ordered,
     )
 
 
@@ -59,7 +61,7 @@ def lower_gemm(
     calibration: PrimitiveCalibration,
     stream_id: str = "stream-0",
     element_bytes: int = 2,
-) -> list[Event]:
+) -> EventGraph:
     """Lower a tiled GEMM into per-CTA memory and tensor-core events."""
 
     for name, value in (
@@ -79,9 +81,8 @@ def lower_gemm(
             "KernelLaunch",
             kernel_id,
             stream_id,
-            "launch",
             calibration,
-            stream_ordered=True,
+            global_demand={"launch": 1},
         )
     ]
     stores: list[str] = []
@@ -105,21 +106,21 @@ def lower_gemm(
                         "CTAAdmission",
                         kernel_id,
                         stream_id,
-                        "sm",
                         calibration,
                         cta_id=cta_id,
                         dependencies=(launch_id,),
+                        per_sm_demand={"cta_slots": 1},
                     ),
                     _event(
                         load_id,
                         "GlobalLoad",
                         kernel_id,
                         stream_id,
-                        "global_memory",
                         calibration,
                         quantity=load_bytes,
                         cta_id=cta_id,
                         dependencies=(admission_id,),
+                        global_demand={"hbm_bandwidth": 1},
                         bytes=load_bytes,
                     ),
                     _event(
@@ -127,11 +128,11 @@ def lower_gemm(
                         "MMA",
                         kernel_id,
                         stream_id,
-                        "tensor_core",
                         calibration,
                         quantity=mma_instructions,
                         cta_id=cta_id,
                         dependencies=(load_id,),
+                        per_sm_demand={"tensor_core": 1},
                         instruction_count=mma_instructions,
                     ),
                     _event(
@@ -139,11 +140,11 @@ def lower_gemm(
                         "GlobalStore",
                         kernel_id,
                         stream_id,
-                        "global_memory",
                         calibration,
                         quantity=store_bytes,
                         cta_id=cta_id,
                         dependencies=(mma_id,),
+                        global_demand={"l2_bandwidth": 1},
                         bytes=store_bytes,
                     ),
                 ]
@@ -157,13 +158,12 @@ def lower_gemm(
             "KernelComplete",
             kernel_id,
             stream_id,
-            "launch",
             calibration,
             dependencies=tuple(stores),
-            stream_ordered=True,
+            global_demand={"launch": 1},
         )
     )
-    return events
+    return EventGraph(tuple(events))
 
 
 def lower_rmsnorm(
@@ -174,7 +174,7 @@ def lower_rmsnorm(
     calibration: PrimitiveCalibration,
     stream_id: str = "stream-0",
     element_bytes: int = 2,
-) -> list[Event]:
+) -> EventGraph:
     """Lower RMSNorm into one explicit reduction/normalization chain per row."""
 
     for name, value in (
@@ -191,9 +191,8 @@ def lower_rmsnorm(
             "KernelLaunch",
             kernel_id,
             stream_id,
-            "launch",
             calibration,
-            stream_ordered=True,
+            global_demand={"launch": 1},
         )
     ]
     stores: list[str] = []
@@ -212,11 +211,11 @@ def lower_rmsnorm(
                     "GlobalLoad",
                     kernel_id,
                     stream_id,
-                    "global_memory",
                     calibration,
                     quantity=row_bytes,
                     cta_id=cta_id,
                     dependencies=(launch_id,),
+                    global_demand={"hbm_bandwidth": 1},
                     bytes=row_bytes,
                 ),
                 _event(
@@ -224,11 +223,11 @@ def lower_rmsnorm(
                     "Reduction",
                     kernel_id,
                     stream_id,
-                    "alu",
                     calibration,
                     quantity=hidden_size,
                     cta_id=cta_id,
                     dependencies=(load_id,),
+                    per_sm_demand={"alu": 1},
                     instruction_count=hidden_size,
                 ),
                 _event(
@@ -236,21 +235,21 @@ def lower_rmsnorm(
                     "Barrier",
                     kernel_id,
                     stream_id,
-                    "barrier",
                     calibration,
                     cta_id=cta_id,
                     dependencies=(reduction_id,),
+                    per_sm_demand={"barrier": 1},
                 ),
                 _event(
                     normalize_id,
                     "FMA",
                     kernel_id,
                     stream_id,
-                    "alu",
                     calibration,
                     quantity=hidden_size,
                     cta_id=cta_id,
                     dependencies=(barrier_id,),
+                    per_sm_demand={"alu": 1},
                     instruction_count=hidden_size,
                 ),
                 _event(
@@ -258,11 +257,11 @@ def lower_rmsnorm(
                     "GlobalStore",
                     kernel_id,
                     stream_id,
-                    "global_memory",
                     calibration,
                     quantity=row_bytes,
                     cta_id=cta_id,
                     dependencies=(normalize_id,),
+                    global_demand={"l2_bandwidth": 1},
                     bytes=row_bytes,
                 ),
             ]
@@ -275,13 +274,12 @@ def lower_rmsnorm(
             "KernelComplete",
             kernel_id,
             stream_id,
-            "launch",
             calibration,
             dependencies=tuple(stores),
-            stream_ordered=True,
+            global_demand={"launch": 1},
         )
     )
-    return events
+    return EventGraph(tuple(events))
 
 
 def lower_silu_and_mul(
@@ -291,7 +289,7 @@ def lower_silu_and_mul(
     calibration: PrimitiveCalibration,
     stream_id: str = "stream-0",
     element_bytes: int = 2,
-) -> list[Event]:
+) -> EventGraph:
     """Lower fused SiLU-and-Mul into a memory/SFU/FMA event chain."""
 
     _positive_integer("elements", elements)
@@ -303,25 +301,24 @@ def lower_silu_and_mul(
     store_id = f"{kernel_id}:store"
     input_bytes = elements * element_bytes * 2
     output_bytes = elements * element_bytes
-    return [
+    events = [
         _event(
             launch_id,
             "KernelLaunch",
             kernel_id,
             stream_id,
-            "launch",
             calibration,
-            stream_ordered=True,
+            global_demand={"launch": 1},
         ),
         _event(
             load_id,
             "GlobalLoad",
             kernel_id,
             stream_id,
-            "global_memory",
             calibration,
             quantity=input_bytes,
             dependencies=(launch_id,),
+            global_demand={"hbm_bandwidth": 1},
             bytes=input_bytes,
         ),
         _event(
@@ -329,10 +326,10 @@ def lower_silu_and_mul(
             "SFU",
             kernel_id,
             stream_id,
-            "sfu",
             calibration,
             quantity=elements,
             dependencies=(load_id,),
+            per_sm_demand={"sfu": 1},
             instruction_count=elements,
         ),
         _event(
@@ -340,10 +337,10 @@ def lower_silu_and_mul(
             "FMA",
             kernel_id,
             stream_id,
-            "alu",
             calibration,
             quantity=elements,
             dependencies=(sfu_id,),
+            per_sm_demand={"alu": 1},
             instruction_count=elements,
         ),
         _event(
@@ -351,10 +348,10 @@ def lower_silu_and_mul(
             "GlobalStore",
             kernel_id,
             stream_id,
-            "global_memory",
             calibration,
             quantity=output_bytes,
             dependencies=(fma_id,),
+            global_demand={"l2_bandwidth": 1},
             bytes=output_bytes,
         ),
         _event(
@@ -362,63 +359,36 @@ def lower_silu_and_mul(
             "KernelComplete",
             kernel_id,
             stream_id,
-            "launch",
             calibration,
             dependencies=(store_id,),
-            stream_ordered=True,
+            global_demand={"launch": 1},
         ),
     ]
+    return EventGraph(tuple(events))
 
 
 def lower_gemm_v2(
     kernel_id: str,
     *,
-    m: int,
-    n: int,
-    k: int,
-    tile_m: int,
-    tile_n: int,
+    manifest: GemmLaunchManifest,
     calibration: PrimitiveCalibration,
-    hardware: HardwareConfig,
+    initial_cache_state: InitialCacheState,
     stream_id: str = "stream-0",
-    element_bytes: int = 2,
-    max_ctas_per_sm: int = 1,
-    tile_k: int = 0,
-) -> list[Event]:
-    """Lower a tiled GEMM with structural decomposition.
+) -> EventGraph:
+    """Lower one authoritative GEMM manifest into a normalized EventGraph."""
 
-    Compared to lower_gemm, this version emits a chip-level cold-input event,
-    full-wave/tail-wave admission labels, full/partial useful-work events, and
-    an explicit load/compute/store dependency graph.
+    resolution = manifest.resolve_cache(initial_cache_state)
+    transitions_by_access: dict[int, list[tuple[int, CacheTransition]]] = {}
+    flush_transitions: list[tuple[int, CacheTransition]] = []
+    for transition_index, transition in enumerate(resolution.transitions):
+        if transition.access_index is None:
+            flush_transitions.append((transition_index, transition))
+        else:
+            transitions_by_access.setdefault(
+                transition.access_index,
+                [],
+            ).append((transition_index, transition))
 
-    ``tile_k`` is retained for dataset and interface compatibility, but it does
-    not yet change event timing. Cache residency and K-stage pipeline behavior
-    require a separate execution model.
-    """
-
-    for name, value in (
-        ("m", m),
-        ("n", n),
-        ("k", k),
-        ("tile_m", tile_m),
-        ("tile_n", tile_n),
-        ("element_bytes", element_bytes),
-        ("max_ctas_per_sm", max_ctas_per_sm),
-    ):
-        _positive_integer(name, value)
-    if tile_k < 0:
-        raise ValueError("tile_k must be non-negative")
-
-    m_tiles = ceil_div(m, tile_m)
-    n_tiles = ceil_div(n, tile_n)
-    total_ctas = m_tiles * n_tiles
-
-    # Structural analysis
-    full_wave_ctas, tail_wave_ctas = compute_wave_split(
-        total_ctas, hardware.num_sms, max_ctas_per_sm
-    )
-
-    # Emit events
     launch_id = f"{kernel_id}:launch"
     events: list[Event] = [
         _event(
@@ -426,114 +396,269 @@ def lower_gemm_v2(
             "KernelLaunch",
             kernel_id,
             stream_id,
-            "launch",
             calibration,
-            stream_ordered=True,
+            global_demand={"launch": 1},
         )
     ]
+    lifetimes: list[ResourceLifetime] = []
+    work_item_release: dict[str, str] = {}
+    access_tail: dict[int, str] = {}
+    terminal_ids: list[str] = []
 
-    # Cold-HBM boundary: each unique input byte must enter the device once.
-    # Intra-kernel reuse does not reduce this mandatory first-touch traffic.
-    # Output C terminates at the separately modeled L2 store boundary.
-    a_bytes = m * k * element_bytes
-    b_bytes = n * k * element_bytes
-    total_effective_dram_bytes = a_bytes + b_bytes
+    def append_accesses(
+        access_indices: tuple[int, ...],
+        kind: str,
+        dependencies: tuple[str, ...],
+        *,
+        owner_id: str,
+        lifetime_id: str | None,
+    ) -> tuple[str, ...]:
+        for access_index in access_indices:
+            if manifest.cache_accesses[access_index].kind != kind:
+                continue
+            dependencies = _append_cache_transitions(
+                events,
+                transitions_by_access.get(access_index, ()),
+                dependencies,
+                kernel_id=kernel_id,
+                stream_id=stream_id,
+                calibration=calibration,
+                owner_id=owner_id,
+                lifetime_id=lifetime_id,
+            )
+        return dependencies
 
-    dram_event_id = f"{kernel_id}:mem-total"
-    events.append(
-        _event(
-            dram_event_id,
-            "GlobalLoad_L2Miss",
-            kernel_id,
-            stream_id,
-            "dram_bandwidth",
-            calibration,
-            quantity=total_effective_dram_bytes,
-            dependencies=(launch_id,),
-            bytes=total_effective_dram_bytes,
-        )
-    )
-
-    stores: list[str] = []
-
-    for cta_index in range(total_ctas):
-        cta_id = f"{kernel_id}:cta-{cta_index}"
-        is_tail = cta_index >= full_wave_ctas
-        is_partial = is_edge_tile(cta_index, m_tiles, n_tiles, m, n, tile_m, tile_n)
-
-        actual_m, actual_n = compute_actual_tile_dims(cta_index, m, n, tile_m, tile_n, n_tiles)
-
-        # 1. CTA Admission (wave-aware)
-        admission_type = "CTAAdmission_TailWave" if is_tail else "CTAAdmission_FullWave"
-        admission_id = f"{cta_id}:admission"
+    for worker in manifest.workers:
+        lifetime_id = f"{kernel_id}:lifetime:{worker.worker_id}"
+        acquire_id = f"{kernel_id}:worker:{worker.worker_id}:acquire"
+        release_id = f"{kernel_id}:worker:{worker.worker_id}:release"
         events.append(
-            _event(
-                admission_id,
-                admission_type,
-                kernel_id,
-                stream_id,
-                "sm",
-                calibration,
-                cta_id=cta_id,
+            Event(
+                event_id=acquire_id,
+                event_type="CTAAdmission",
+                kernel_id=kernel_id,
+                stream_id=stream_id,
+                duration=0.0,
                 dependencies=(launch_id,),
+                lifetime_id=lifetime_id,
+                cta_id=worker.worker_id,
             )
         )
+        dependencies = (acquire_id,)
 
-        # 2. MMA (tile-aware) — the per-SM compute work
-        #    MMA instructions: 2*M*N*K FLOPs / 256 FLOPs-per-instruction
-        mma_type = "MMA_PartialTile" if is_partial else "MMA_FullTile"
-        mma_instructions = ceil_div(2 * actual_m * actual_n * k, 256)
-        mma_id = f"{cta_id}:mma"
+        for work_item_id in worker.work_item_ids:
+            work_item = manifest.work_item_by_id[work_item_id]
+            dependencies = append_accesses(
+                work_item.cache_access_indices,
+                "read",
+                dependencies,
+                owner_id=work_item_id,
+                lifetime_id=lifetime_id,
+            )
+            mma_instructions = ceil_div(
+                work_item.physical_issued_work,
+                256,
+            )
+            mma_id = f"{kernel_id}:work:{work_item_id}:mma"
+            events.append(
+                _event(
+                    mma_id,
+                    "MMA",
+                    kernel_id,
+                    stream_id,
+                    calibration,
+                    quantity=mma_instructions,
+                    cta_id=work_item_id,
+                    dependencies=dependencies,
+                    per_sm_demand={"tensor_core": 1},
+                    lifetime_id=lifetime_id,
+                    instruction_count=mma_instructions,
+                )
+            )
+            dependencies = append_accesses(
+                work_item.cache_access_indices,
+                "overwrite",
+                (mma_id,),
+                owner_id=work_item_id,
+                lifetime_id=lifetime_id,
+            )
+
+        events.append(
+            Event(
+                event_id=release_id,
+                event_type="CTAAdmission",
+                kernel_id=kernel_id,
+                stream_id=stream_id,
+                duration=0.0,
+                dependencies=dependencies,
+                lifetime_id=lifetime_id,
+                cta_id=worker.worker_id,
+            )
+        )
+        lifetimes.append(
+            ResourceLifetime(
+                lifetime_id=lifetime_id,
+                acquire_event_id=acquire_id,
+                release_event_id=release_id,
+                per_sm_reservation=worker.per_sm_reservation,
+                eligible_sms=worker.eligible_sms,
+            )
+        )
+        terminal_ids.append(release_id)
+        for work_item_id in worker.work_item_ids:
+            work_item_release[work_item_id] = release_id
+            for access_index in manifest.work_item_by_id[
+                work_item_id
+            ].cache_access_indices:
+                access_tail[access_index] = release_id
+
+    accumulator_tail = {
+        work_item.accumulator_id: work_item_release[work_item.work_item_id]
+        for work_item in manifest.work_items
+    }
+    for step in manifest.reduction_steps:
+        dependencies = tuple(
+            sorted(
+                {
+                    accumulator_tail[accumulator_id]
+                    for accumulator_id in step.input_accumulator_ids
+                }
+            )
+        )
+        dependencies = append_accesses(
+            step.cache_access_indices,
+            "read",
+            dependencies,
+            owner_id=step.reduction_id,
+            lifetime_id=None,
+        )
+        reduction_id = f"{kernel_id}:reduction:{step.reduction_id}"
         events.append(
             _event(
-                mma_id,
-                mma_type,
+                reduction_id,
+                "Reduction",
                 kernel_id,
                 stream_id,
-                "tensor_core",
                 calibration,
-                quantity=mma_instructions,
-                cta_id=cta_id,
-                dependencies=(admission_id,),
-                instruction_count=mma_instructions,
+                quantity=step.physical_issued_work,
+                cta_id=step.reduction_id,
+                dependencies=dependencies,
+                per_sm_demand={"alu": 1},
+                instruction_count=step.physical_issued_work,
             )
         )
-
-        # 3. Store — depends on MMA completing and terminates at the L2 boundary.
-        store_bytes = actual_m * actual_n * element_bytes
-        store_id = f"{cta_id}:store"
-        events.append(
-            _event(
-                store_id,
-                "GlobalStore",
-                kernel_id,
-                stream_id,
-                "l2_bandwidth",
-                calibration,
-                quantity=store_bytes,
-                cta_id=cta_id,
-                dependencies=(mma_id,),
-                bytes=store_bytes,
-            )
+        dependencies = append_accesses(
+            step.cache_access_indices,
+            "overwrite",
+            (reduction_id,),
+            owner_id=step.reduction_id,
+            lifetime_id=None,
         )
-        stores.append(store_id)
+        reduction_tail = dependencies[0]
+        accumulator_tail[step.output_accumulator_id] = reduction_tail
+        terminal_ids.append(reduction_tail)
+        for access_index in step.cache_access_indices:
+            access_tail[access_index] = reduction_tail
 
-    # Kernel completion — depends on all stores AND the chip-level DRAM event.
-    # Makespan = max(total_DRAM_time, total_compute_time + store_time)
+    output_access_by_block = {
+        access.block.identity: access_index
+        for access_index, access in enumerate(manifest.cache_accesses)
+        if access.is_output
+    }
+    flush_tail_ids: list[str] = []
+    for transition_index, transition in flush_transitions:
+        access_index = output_access_by_block[transition.block.identity]
+        dependencies = _append_cache_transitions(
+            events,
+            ((transition_index, transition),),
+            (access_tail[access_index],),
+            kernel_id=kernel_id,
+            stream_id=stream_id,
+            calibration=calibration,
+            owner_id=None,
+            lifetime_id=None,
+        )
+        flush_tail_ids.append(dependencies[0])
+
+    completion_dependencies = tuple(
+        sorted(set(terminal_ids + flush_tail_ids))
+    )
     events.append(
         _event(
             f"{kernel_id}:complete",
             "KernelComplete",
             kernel_id,
             stream_id,
-            "launch",
             calibration,
-            dependencies=tuple(stores) + (dram_event_id,),
-            stream_ordered=True,
+            dependencies=completion_dependencies,
+            global_demand={"launch": 1},
         )
     )
-    return events
+    return EventGraph(tuple(events), tuple(lifetimes))
 
+
+def _append_cache_transitions(
+    events: list[Event],
+    indexed_transitions,
+    dependencies: tuple[str, ...],
+    *,
+    kernel_id: str,
+    stream_id: str,
+    calibration: PrimitiveCalibration,
+    owner_id: str | None,
+    lifetime_id: str | None,
+) -> tuple[str, ...]:
+    for transition_index, transition in indexed_transitions:
+        for step_index, (event_type, byte_count) in enumerate(
+            _cache_transition_steps(transition)
+        ):
+            event_id = (
+                f"{kernel_id}:cache:{transition_index}:{step_index}:"
+                f"{event_type.lower()}"
+            )
+            resource = (
+                "hbm_bandwidth"
+                if event_type.startswith("HBM")
+                else "l2_bandwidth"
+            )
+            events.append(
+                _event(
+                    event_id,
+                    event_type,
+                    kernel_id,
+                    stream_id,
+                    calibration,
+                    quantity=byte_count,
+                    cta_id=owner_id,
+                    dependencies=dependencies,
+                    global_demand={resource: 1},
+                    lifetime_id=lifetime_id,
+                    bytes=byte_count,
+                )
+            )
+            dependencies = (event_id,)
+    return dependencies
+
+
+def _cache_transition_steps(
+    transition: CacheTransition,
+) -> tuple[tuple[str, int], ...]:
+    if transition.action == "read_hit":
+        return (("L2Read", transition.l2_read_bytes),)
+    if transition.action == "read_miss":
+        return (
+            ("HBMRead", transition.hbm_read_bytes),
+            ("L2Write", transition.l2_write_bytes),
+            ("L2Read", transition.l2_read_bytes),
+        )
+    if transition.action in {"overwrite_hit", "overwrite_miss"}:
+        return (("L2Write", transition.l2_write_bytes),)
+    if transition.action == "evict_clean":
+        return ()
+    return (
+        ("L2Read", transition.l2_read_bytes),
+        ("HBMWrite", transition.hbm_write_bytes),
+    )
 
 def _import_fa_schedulers():
     """Import FA scheduler functions from analytical_model package."""
@@ -583,7 +708,7 @@ def lower_flash_attention(
     causal: bool = True,
     stream_id: str = "stream-0",
     element_bytes: int = 2,
-) -> list[Event]:
+) -> EventGraph:
     """Lower FlashAttention into task-level DES events.
 
     Design:
@@ -695,9 +820,8 @@ def lower_flash_attention(
             "KernelLaunch",
             kernel_id,
             stream_id,
-            "launch",
             calibration,
-            stream_ordered=True,
+            global_demand={"launch": 1},
         )
     ]
 
@@ -714,26 +838,21 @@ def lower_flash_attention(
             "GlobalLoad_L2Miss",
             kernel_id,
             stream_id,
-            "dram_bandwidth",
             calibration,
             quantity=total_unique_dram,
             dependencies=(launch_id,),
+            global_demand={"hbm_bandwidth": 1},
             bytes=total_unique_dram,
         )
     )
 
     # Per-SM task chains (compute only, on tensor_core lanes)
-    # Build event lists per SM first, then interleave by task round.
-    # Interleaving ensures the scheduler assigns different SMs' tasks to
-    # different lanes in parallel (scheduler is greedy first-ready-in-order).
-    sm_event_chains: list[list[Event]] = []
     sm_last_sync_ids: list[str] = []
 
     for sm_idx, task_iterations in enumerate(sm_task_iterations):
         if not task_iterations:
             continue
 
-        chain: list[Event] = []
         prev_sync_id = launch_id
 
         for task_idx, iterations in enumerate(task_iterations):
@@ -747,49 +866,40 @@ def lower_flash_attention(
             mma_instructions = ceil_div(mma_ops, 256)
 
             compute_id = f"{task_prefix}:compute"
-            chain.append(
+            events.append(
                 _event(
                     compute_id,
                     "FA_Compute",
                     kernel_id,
                     stream_id,
-                    "tensor_core",
                     calibration,
                     quantity=mma_instructions,
                     cta_id=task_prefix,
                     dependencies=(prev_sync_id,),
+                    per_sm_demand={"tensor_core": 1},
+                    eligible_sms=frozenset({sm_idx}),
                     instruction_count=mma_instructions,
                 )
             )
 
             sync_id = f"{task_prefix}:sync"
-            chain.append(
-                Event(
-                    event_id=sync_id,
-                    event_type="FA_TaskSync",
-                    kernel_id=kernel_id,
-                    stream_id=stream_id,
-                    resource=None,
-                    duration=0.0,
+            events.append(
+                _event(
+                    sync_id,
+                    "FA_TaskSync",
+                    kernel_id,
+                    stream_id,
+                    calibration,
                     cta_id=task_prefix,
                     dependencies=(compute_id,),
-                    stream_ordered=False,
+                    eligible_sms=frozenset({sm_idx}),
                 )
             )
 
             prev_sync_id = sync_id
 
-        if chain:
-            sm_event_chains.append(chain)
+        if prev_sync_id != launch_id:
             sm_last_sync_ids.append(prev_sync_id)
-
-    # Interleave: emit events round-robin across SMs (task0 from all SMs,
-    # then task1 from all SMs, ...) so scheduler parallelizes across lanes.
-    max_chain_len = max((len(c) for c in sm_event_chains), default=0)
-    for round_idx in range(max_chain_len):
-        for chain in sm_event_chains:
-            if round_idx < len(chain):
-                events.append(chain[round_idx])
 
     # Kernel completion: depends on all SM chains + DRAM event
     events.append(
@@ -798,10 +908,9 @@ def lower_flash_attention(
             "KernelComplete",
             kernel_id,
             stream_id,
-            "launch",
             calibration,
             dependencies=tuple(sm_last_sync_ids) + (dram_event_id,),
-            stream_ordered=True,
+            global_demand={"launch": 1},
         )
     )
-    return events
+    return EventGraph(tuple(events))

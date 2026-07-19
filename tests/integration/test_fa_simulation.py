@@ -3,9 +3,10 @@
 import pytest
 
 from event_simulator import (
+    EventGraph,
+    ResourceConfig,
     build_report,
     derive_calibration,
-    derive_resource_config,
     load_hardware_config,
     lower_flash_attention,
     schedule,
@@ -24,19 +25,28 @@ def h100_cal(h100_hw):
 
 @pytest.fixture
 def h100_rc(h100_hw):
-    return derive_resource_config(h100_hw, operator_type="flash_attention")
+    return ResourceConfig(
+        global_capacities={
+            "hbm_bandwidth": 1,
+            "l2_bandwidth": 1,
+            "launch": 1,
+        },
+        sm_count=h100_hw.num_sms,
+        per_sm_capacities={"tensor_core": 1},
+    )
 
 
 class TestFAEventStructure:
     """Verify correct event emission patterns."""
 
     def test_emits_expected_event_types(self, h100_hw, h100_cal, h100_rc):
-        events = lower_flash_attention(
+        graph = lower_flash_attention(
             "fa-struct", batch_size=2, q_lengths=[256, 256],
             kv_lengths=[512, 512], num_qo_heads=8, num_kv_heads=8,
             head_dim=128, calibration=h100_cal, hardware=h100_hw,
         )
-        types = {e.event_type for e in events}
+        assert isinstance(graph, EventGraph)
+        types = {event.event_type for event in graph.events}
         assert "KernelLaunch" in types
         assert "KernelComplete" in types
         assert "GlobalLoad_L2Miss" in types
@@ -44,21 +54,29 @@ class TestFAEventStructure:
         assert "FA_TaskSync" in types
 
     def test_single_dram_event(self, h100_hw, h100_cal, h100_rc):
-        events = lower_flash_attention(
+        graph = lower_flash_attention(
             "fa-dram", batch_size=2, q_lengths=[1024, 1024],
             kv_lengths=[2048, 2048], num_qo_heads=32, num_kv_heads=8,
             head_dim=128, calibration=h100_cal, hardware=h100_hw,
         )
-        dram_events = [e for e in events if e.event_type == "GlobalLoad_L2Miss"]
+        dram_events = [
+            event
+            for event in graph.events
+            if event.event_type == "GlobalLoad_L2Miss"
+        ]
         assert len(dram_events) == 1
 
     def test_dram_bytes_gqa_aware(self, h100_hw, h100_cal, h100_rc):
-        events = lower_flash_attention(
+        graph = lower_flash_attention(
             "fa-gqa", batch_size=1, q_lengths=[128],
             kv_lengths=[256], num_qo_heads=32, num_kv_heads=8,
             head_dim=128, calibration=h100_cal, hardware=h100_hw,
         )
-        dram = next(e for e in events if e.event_type == "GlobalLoad_L2Miss")
+        dram = next(
+            event
+            for event in graph.events
+            if event.event_type == "GlobalLoad_L2Miss"
+        )
         # KV: 256 * 8 * 128 * 2 * 2 = 1048576 (num_kv_heads for K+V)
         # Q: 128 * 32 * 128 * 2 = 1048576 (num_qo_heads)
         # O: 128 * 32 * 128 * 2 = 1048576 (num_qo_heads)
@@ -66,13 +84,17 @@ class TestFAEventStructure:
         assert dram.bytes == expected
 
     def test_task_count_matches_scheduler(self, h100_hw, h100_cal, h100_rc):
-        events = lower_flash_attention(
+        graph = lower_flash_attention(
             "fa-tasks", batch_size=4, q_lengths=[2048]*4,
             kv_lengths=[2048]*4, num_qo_heads=32, num_kv_heads=8,
             head_dim=128, calibration=h100_cal, hardware=h100_hw,
         )
-        n_compute = sum(1 for e in events if e.event_type == "FA_Compute")
-        n_sync = sum(1 for e in events if e.event_type == "FA_TaskSync")
+        n_compute = sum(
+            event.event_type == "FA_Compute" for event in graph.events
+        )
+        n_sync = sum(
+            event.event_type == "FA_TaskSync" for event in graph.events
+        )
         assert n_compute == n_sync
         assert n_compute > 0
 
@@ -80,7 +102,7 @@ class TestFAEventStructure:
     def test_fa2_path_executes_with_binary_search_contract(
         self, h100_hw, h100_cal, h100_rc, attention_type
     ):
-        events = lower_flash_attention(
+        graph = lower_flash_attention(
             "fa2-path",
             batch_size=2,
             q_lengths=[128, 256],
@@ -94,16 +116,16 @@ class TestFAEventStructure:
         )
 
         compute_events = [
-            event for event in events if event.event_type == "FA_Compute"
+            event for event in graph.events if event.event_type == "FA_Compute"
         ]
         assert compute_events
-        assert schedule(events, h100_rc).makespan > 0.0
+        assert schedule(graph, h100_rc).makespan > 0.0
 
     def test_fa3_schedule_threshold_matches_canonical_formula(
         self, h100_hw, h100_cal
     ):
         batch_size = 91
-        events = lower_flash_attention(
+        graph = lower_flash_attention(
             "fa3-threshold",
             batch_size=batch_size,
             q_lengths=[128] * batch_size,
@@ -117,7 +139,7 @@ class TestFAEventStructure:
         )
 
         compute_count = sum(
-            event.event_type == "FA_Compute" for event in events
+            event.event_type == "FA_Compute" for event in graph.events
         )
         canonical_works_per_head = batch_size + batch_size - 1
 
@@ -165,60 +187,124 @@ class TestFAScheduling:
     """Verify scheduling produces valid results."""
 
     def test_makespan_positive(self, h100_hw, h100_cal, h100_rc):
-        events = lower_flash_attention(
+        graph = lower_flash_attention(
             "fa-mk", batch_size=2, q_lengths=[1024, 1024],
             kv_lengths=[2048, 2048], num_qo_heads=32, num_kv_heads=8,
             head_dim=128, calibration=h100_cal, hardware=h100_hw,
         )
-        result = schedule(events, h100_rc)
+        result = schedule(graph, h100_rc)
         assert result.makespan > 0
 
     def test_longer_seq_takes_more_time(self, h100_hw, h100_cal, h100_rc):
-        events_short = lower_flash_attention(
+        graph_short = lower_flash_attention(
             "fa-s", batch_size=1, q_lengths=[512],
             kv_lengths=[512], num_qo_heads=32, num_kv_heads=8,
             head_dim=128, calibration=h100_cal, hardware=h100_hw,
         )
-        events_long = lower_flash_attention(
+        graph_long = lower_flash_attention(
             "fa-l", batch_size=1, q_lengths=[4096],
             kv_lengths=[4096], num_qo_heads=32, num_kv_heads=8,
             head_dim=128, calibration=h100_cal, hardware=h100_hw,
         )
-        ms_short = schedule(events_short, h100_rc).makespan
-        ms_long = schedule(events_long, h100_rc).makespan
+        ms_short = schedule(graph_short, h100_rc).makespan
+        ms_long = schedule(graph_long, h100_rc).makespan
         assert ms_long > ms_short
 
     def test_report_breakdown(self, h100_hw, h100_cal, h100_rc):
-        events = lower_flash_attention(
+        graph = lower_flash_attention(
             "fa-report", batch_size=4, q_lengths=[2048]*4,
             kv_lengths=[2048]*4, num_qo_heads=32, num_kv_heads=8,
             head_dim=128, calibration=h100_cal, hardware=h100_hw,
         )
-        result = schedule(events, h100_rc)
+        result = schedule(graph, h100_rc)
         report = build_report(result)
-        assert report.makespan > 0
+        assert report.feasible_makespan > 0
+        assert report.dependency_critical_path > 0
         assert report.resource_busy_time["tensor_core"] > 0
-        assert report.resource_busy_time["dram_bandwidth"] > 0
-        assert len(report.critical_path_event_ids) >= 3
+        assert report.resource_busy_time["hbm_bandwidth"] > 0
+        assert len(report.dependency_critical_path_event_ids) >= 3
+
+    def test_compute_and_sync_events_have_explicit_single_sm_affinity(
+        self, h100_hw, h100_cal
+    ):
+        graph = lower_flash_attention(
+            "fa-affinity",
+            batch_size=2,
+            q_lengths=[256, 512],
+            kv_lengths=[512, 1024],
+            num_qo_heads=8,
+            num_kv_heads=8,
+            head_dim=128,
+            calibration=h100_cal,
+            hardware=h100_hw,
+        )
+
+        task_events = tuple(
+            event
+            for event in graph.events
+            if event.event_type in {"FA_Compute", "FA_TaskSync"}
+        )
+        assert task_events
+        assert all(
+            event.eligible_sms is not None
+            and len(event.eligible_sms) == 1
+            for event in task_events
+        )
+        assert all(
+            dict(event.per_sm_demand) == {"tensor_core": 1}
+            for event in task_events
+            if event.event_type == "FA_Compute"
+        )
+        assert graph.lifetimes == ()
+
+    def test_event_tuple_permutation_does_not_change_fa_schedule(
+        self, h100_hw, h100_cal, h100_rc
+    ):
+        graph = lower_flash_attention(
+            "fa-order",
+            batch_size=2,
+            q_lengths=[256, 512],
+            kv_lengths=[512, 1024],
+            num_qo_heads=8,
+            num_kv_heads=8,
+            head_dim=128,
+            calibration=h100_cal,
+            hardware=h100_hw,
+        )
+        permuted = EventGraph(events=tuple(reversed(graph.events)))
+
+        original = schedule(graph, h100_rc)
+        reordered = schedule(permuted, h100_rc)
+
+        assert reordered.makespan == original.makespan
+        assert reordered.entries == original.entries
 
 
 class TestFACausalMasking:
     """Verify causal masking reduces work."""
 
     def test_causal_less_work_than_non_causal(self, h100_hw, h100_cal, h100_rc):
-        events_causal = lower_flash_attention(
+        graph_causal = lower_flash_attention(
             "fa-c", batch_size=1, q_lengths=[2048],
             kv_lengths=[2048], num_qo_heads=8, num_kv_heads=8,
             head_dim=128, calibration=h100_cal, hardware=h100_hw, causal=True,
         )
-        events_full = lower_flash_attention(
+        graph_full = lower_flash_attention(
             "fa-f", batch_size=1, q_lengths=[2048],
             kv_lengths=[2048], num_qo_heads=8, num_kv_heads=8,
             head_dim=128, calibration=h100_cal, hardware=h100_hw, causal=False,
         )
         # Causal has fewer MMA instructions total (triangular mask)
-        causal_instrs = sum(e.instruction_count for e in events_causal if e.event_type == "FA_Compute")
-        full_instrs = sum(e.instruction_count for e in events_full if e.event_type == "FA_Compute")
+        causal_instrs = sum(
+            event.instruction_count
+            for event in graph_causal.events
+            if event.event_type == "FA_Compute"
+        )
+        full_instrs = sum(
+            event.instruction_count
+            for event in graph_full.events
+            if event.event_type == "FA_Compute"
+        )
         assert causal_instrs < full_instrs
 
 

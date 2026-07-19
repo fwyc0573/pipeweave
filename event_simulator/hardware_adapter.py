@@ -119,45 +119,33 @@ def derive_resource_config(
     """Derive a ResourceConfig appropriate for the given operator type.
 
     Resource model:
-    - Compute (tensor_core, alu, sfu): num_sms lanes — PER-SM parallelism
-    - Memory bandwidth (dram, l2): 1 lane — chip-wide shared pool
-      (events are summed into one bandwidth bottleneck by the scheduler)
-    - SM slots: num_sms lanes — CTA admission parallelism
+    - Launch, HBM, and L2 bandwidth are chip-wide shared resources.
+    - Compute, synchronization, and CTA slots are replicated per SM.
     """
-    if operator_type in ("gemm", "gemm_v2"):
-        return ResourceConfig(
-            {
-                "launch": 1,
-                "sm": hw.num_sms,
-                "tensor_core": hw.num_sms,
-                "dram_bandwidth": 1,
-                "l2_bandwidth": 1,
-                "global_memory": 1,
-                "alu": hw.num_sms,
-                "sfu": hw.num_sms,
-                "barrier": hw.num_sms,
-            }
-        )
-    if operator_type == "flash_attention":
-        return ResourceConfig(
-            {
-                "launch": 1,
-                "tensor_core": hw.num_sms,
-                "dram_bandwidth": 1,
-            }
-        )
-    if operator_type in ("rmsnorm", "silu_and_mul"):
-        return ResourceConfig(
-            {
-                "launch": 1,
-                "sm": hw.num_sms,
-                "global_memory": 1,
-                "alu": hw.num_sms,
-                "sfu": hw.num_sms,
-                "barrier": hw.num_sms,
-            }
-        )
-    raise ValueError(f"unknown operator_type: {operator_type}")
+    known_operator_types = {
+        "flash_attention",
+        "gemm",
+        "gemm_v2",
+        "rmsnorm",
+        "silu_and_mul",
+    }
+    if operator_type not in known_operator_types:
+        raise ValueError(f"unknown operator_type: {operator_type}")
+    return ResourceConfig(
+        global_capacities={
+            "hbm_bandwidth": 1,
+            "l2_bandwidth": 1,
+            "launch": 1,
+        },
+        sm_count=hw.num_sms,
+        per_sm_capacities={
+            "alu": 1,
+            "barrier": 1,
+            "cta_slots": 1,
+            "sfu": 1,
+            "tensor_core": 1,
+        },
+    )
 
 
 def derive_calibration(hw: HardwareConfig) -> PrimitiveCalibration:
@@ -183,7 +171,7 @@ def derive_calibration(hw: HardwareConfig) -> PrimitiveCalibration:
     Peak rates provide idealized primitive durations. Bound acceptance is a
     separate validation step and is not certified by this function.
     """
-    dram_bytes_per_us = _require_positive_rate(
+    hbm_bytes_per_us = _require_positive_rate(
         "mem_bandwidth_bytes_per_us", hw.mem_bandwidth_bytes_per_us
     )
     l2_bytes_per_us = _require_positive_rate(
@@ -200,7 +188,7 @@ def derive_calibration(hw: HardwareConfig) -> PrimitiveCalibration:
     )
 
     # Memory: CHIP-WIDE bandwidth (single shared pool)
-    dram_us_per_byte = 1.0 / dram_bytes_per_us
+    hbm_us_per_byte = 1.0 / hbm_bytes_per_us
     l2_us_per_byte = 1.0 / l2_bytes_per_us
 
     # Compute: PER-SM throughput
@@ -228,10 +216,14 @@ def derive_calibration(hw: HardwareConfig) -> PrimitiveCalibration:
             "CTAAdmission_FullWave": cta_admission_us,
             "CTAAdmission_TailWave": cta_admission_us,
             # Memory — cache-aware splits
-            "GlobalLoad": dram_us_per_byte,
+            "GlobalLoad": hbm_us_per_byte,
             "GlobalLoad_L2Hit": l2_us_per_byte,
-            "GlobalLoad_L2Miss": dram_us_per_byte,
+            "GlobalLoad_L2Miss": hbm_us_per_byte,
             "GlobalStore": l2_us_per_byte,
+            "HBMRead": hbm_us_per_byte,
+            "HBMWrite": hbm_us_per_byte,
+            "L2Read": l2_us_per_byte,
+            "L2Write": l2_us_per_byte,
             # Compute
             "MMA": mma_us_per_instr,
             "MMA_FullTile": mma_us_per_instr,
@@ -247,7 +239,7 @@ def derive_calibration(hw: HardwareConfig) -> PrimitiveCalibration:
             "SharedStore": l2_us_per_byte,
             # FlashAttention composites
             "FA_Compute": mma_us_per_instr,
-            "FA_Memory": dram_us_per_byte,
+            "FA_Memory": hbm_us_per_byte,
             "FA_TaskSync": 0.0,
         }
     )

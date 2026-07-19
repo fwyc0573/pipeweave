@@ -25,6 +25,10 @@ EVENT_TYPES = frozenset(
         "GlobalLoad_L2Hit",
         "GlobalLoad_L2Miss",
         "GlobalStore",
+        "HBMRead",
+        "HBMWrite",
+        "L2Read",
+        "L2Write",
         # Shared memory
         "SharedLoad",
         "SharedStore",

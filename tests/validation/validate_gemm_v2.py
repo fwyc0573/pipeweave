@@ -15,18 +15,19 @@ from math import isfinite
 from numbers import Real
 from pathlib import Path
 from time import perf_counter
+from typing import Mapping
 
 import numpy as np
 import pandas as pd
 
 from event_simulator import (
+    GemmLaunchManifest,
+    InitialCacheState,
     derive_calibration,
-    derive_resource_config,
     load_hardware_config,
     lower_gemm_v2,
     schedule,
 )
-from event_simulator.structural import ceil_div
 
 
 class UnsupportedGemmRow(ValueError):
@@ -75,28 +76,40 @@ def classical_roofline(row, hw_config):
     return max(compute_time_us, hbm_input_time_us, l2_output_time_us)
 
 
-def des_predict(row, hw_config, calibration, resource_config):
+def des_predict(
+    row,
+    calibration,
+    manifest_map: Mapping[object, GemmLaunchManifest],
+):
     """Run GEMM v2 for a supported launch policy and return its makespan."""
-    case = _parse_supported_case(row)
-    events = lower_gemm_v2(
+    if row.name not in manifest_map:
+        raise UnsupportedGemmRow("missing_authoritative_manifest")
+    manifest = manifest_map[row.name]
+    case = _parse_row_case(row)
+    if (case.m, case.n, case.k) != (manifest.m, manifest.n, manifest.k):
+        raise UnsupportedGemmRow("manifest_problem_shape_mismatch")
+    if (case.tile_m, case.tile_n, case.tile_k) != (
+        manifest.tile_m,
+        manifest.tile_n,
+        manifest.tile_k,
+    ):
+        raise UnsupportedGemmRow("manifest_tile_mismatch")
+    if case.cta_count != len(manifest.workers):
+        raise UnsupportedGemmRow("cta_count_mismatch")
+
+    graph = lower_gemm_v2(
         "gemm-val",
-        m=case.m,
-        n=case.n,
-        k=case.k,
-        tile_m=case.tile_m,
-        tile_n=case.tile_n,
-        tile_k=case.tile_k,
+        manifest=manifest,
         calibration=calibration,
-        hardware=hw_config,
-        element_bytes=2,
+        initial_cache_state=InitialCacheState(),
     )
-    result = schedule(events, resource_config)
+    result = schedule(graph, manifest.resource_config)
     if not isfinite(result.makespan) or result.makespan <= 0.0:
         raise ValueError("DES schedule estimate must be finite and positive")
     return result.makespan
 
 
-def _parse_supported_case(row) -> GemmValidationCase:
+def _parse_row_case(row) -> GemmValidationCase:
     m = _positive_row_int(row, "M", "non_positive_problem_dimension")
     n = _positive_row_int(row, "N", "non_positive_problem_dimension")
     k = _positive_row_int(row, "K", "non_positive_problem_dimension")
@@ -104,16 +117,6 @@ def _parse_supported_case(row) -> GemmValidationCase:
     tile_n = _positive_row_int(row, "tile_N", "non_positive_tile")
     tile_k = _positive_row_int(row, "tile_K", "non_positive_tile")
     cta_count = _positive_row_int(row, "cta_count", "non_positive_cta_count")
-
-    split_k = row["is_split_k"]
-    if not _is_finite_integer(split_k):
-        raise UnsupportedGemmRow("invalid_split_k")
-    if int(split_k) != 0:
-        raise UnsupportedGemmRow("split_k")
-
-    tile_grid_count = ceil_div(m, tile_m) * ceil_div(n, tile_n)
-    if cta_count != tile_grid_count:
-        raise UnsupportedGemmRow("cta_count_mismatch")
 
     return GemmValidationCase(
         m=m,
@@ -154,7 +157,12 @@ def _actual_time(row) -> float:
     return float(value)
 
 
-def evaluate_sample(sample, hw_config, calibration, resource_config) -> ValidationBatch:
+def evaluate_sample(
+    sample,
+    hw_config,
+    calibration,
+    manifest_map: Mapping[object, GemmLaunchManifest],
+) -> ValidationBatch:
     """Evaluate supported rows while counting every deliberate rejection."""
     actual_times: list[float] = []
     des_times: list[float] = []
@@ -166,7 +174,7 @@ def evaluate_sample(sample, hw_config, calibration, resource_config) -> Validati
         try:
             actual = _actual_time(row)
             start_time = perf_counter()
-            des_time = des_predict(row, hw_config, calibration, resource_config)
+            des_time = des_predict(row, calibration, manifest_map)
         except UnsupportedGemmRow as error:
             unsupported_counts[error.reason] += 1
             continue
@@ -256,11 +264,10 @@ def partition_categories(df) -> dict[str, pd.DataFrame]:
     }
 
 
-def main():
+def main(manifest_map: Mapping[object, GemmLaunchManifest]):
     hw_path = Path("hardware/H100.json")
     hw = load_hardware_config(hw_path)
     cal = derive_calibration(hw)
-    rc = derive_resource_config(hw, operator_type="gemm_v2")
 
     df = pd.read_csv("dataset/gemm_test.csv")
     df_h100 = df[df["hardware"].str.contains("H100")].copy()
@@ -287,7 +294,7 @@ def main():
         print(f"Category: {label} ({len(sample)} samples)")
         print(f"{'='*60}")
 
-        batch = evaluate_sample(sample, hw, cal, rc)
+        batch = evaluate_sample(sample, hw, cal, manifest_map)
         unsupported_total = sum(batch.unsupported_counts.values())
         print(f"  Evaluated: {len(batch.actual_times)}")
         print(f"  Unsupported/rejected: {unsupported_total}")
@@ -342,4 +349,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise RuntimeError("authoritative row-indexed GEMM manifests are required")

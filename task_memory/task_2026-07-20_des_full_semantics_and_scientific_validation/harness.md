@@ -4,6 +4,7 @@
 
 | Date | Summary of Changes |
 |---|---|
+| 2026-07-20 | Added the reviewed Wave-4 manifest-only lowering, cache-traffic primitive, worker/reduction, FA-affinity, topology, and authoritative-validator gates. |
 | 2026-07-20 | Added reservation-normalized SafeBound demand, explicit greedy no-progress, and graph-validation timing boundaries. |
 | 2026-07-20 | Added Phase-1 checkpoint, calibration-use separation, held-out prediction freeze, modeled-universal quantifier, and approved comparator lock gates. |
 | 2026-07-20 | Added the manifest-order cache-domain gate after rejecting an unsafe isolated-cache lower-bound recommendation. |
@@ -83,6 +84,11 @@
 53. **Lifetime-Progress Gate:** Lifetime-held occupancy and transient execution demand are distinct. Members consume held resources only from their own sufficient reservation; SafeBound and scheduler share the same reservation normalization; additional transient demands remain atomic and event-local; cross-lifetime member hold-and-wait is rejected; and greedy-policy no-progress raises explicitly rather than stalling or returning a partial schedule.
 54. **Scheduler-Complexity-Accounting Gate:** Graph construction/validation, scheduler graph/queue work, multi-resource placement, and report assembly are reported separately. No total asymptotic claim may omit per-member lifetime reachability, blocked-ready wakes, eligible-SM checks, lifetime admission, or actual measured runtime.
 55. **Static-Cache-Domain Gate:** Cache resolution, exact optimum, SafeBound, and feasible scheduling consume one identical manifest-order fixed-state model. Its theorem is labeled as abstract modeled evidence and is never generalized to arbitrary hardware interleavings; an overcounting cache alternative cannot be called lower-bound-safe.
+56. **Manifest-Only Lowering Gate:** `lower_gemm_v2` requires one validated `GemmLaunchManifest` and explicit `InitialCacheState`, returns `EventGraph`, and accepts no legacy dimension/tile/hardware compatibility signature or inferred stream order.
+57. **Resource-Specific Traffic Gate:** One cache resolution lowers to byte-conserving `HBMRead`, `HBMWrite`, `L2Read`, and `L2Write` Events on the shared `hbm_bandwidth` and `l2_bandwidth` resources; clean eviction emits no resource-time Event and no second traffic model exists.
+58. **Worker-and-Reduction Gate:** Every Worker owns one acquire-to-release `ResourceLifetime`; ordered WorkItems use physical-issued work; reductions remain outside Worker lifetimes, depend on authoritative accumulator producers, and output flushes explicitly precede completion.
+59. **Hardware-Topology Gate:** `sm_count` expresses lane replication, chip-wide launch/HBM/L2 capacities remain global, and tensor/ALU/SFU/barrier/CTA capacities are per-SM rather than multiplied by the number of SMs.
+60. **Authoritative-Validator-and-FA Gate:** The sole GEMM validator requires row-indexed authoritative manifests and counts missing/mismatched entries without policy reconstruction. FA uses explicit singleton SM affinity and dependency chains; tuple order cannot influence placement.
 
 ## Claim Status Vocabulary
 

@@ -4,6 +4,7 @@
 
 | Date | Summary of Changes |
 |---|---|
+| 2026-07-20 | Recorded the incomplete first Wave-4 advisor transport and the successful PTY-backed Claude APPROVE artifact. |
 | 2026-07-20 | Recorded asynchronous `omx ask` completion behavior and the restored Wave-3 review artifacts. |
 | 2026-07-20 | Recorded user approval for the pinned Accel-Sim/GPGPU-Sim and CUDA/`nvcc` comparator environment. |
 | 2026-07-20 | Reconciled the comparator Claude APPROVE/WATCH and corrected its unsupported claim that PTX mode makes `nvcc` irrelevant. |
@@ -60,6 +61,8 @@
 - Two Wave-3 `omx ask claude` wrapper calls returned a StepCode session ID before the underlying local Claude process finished. The actual reviews continued in `~/.stepcode/sessions/*.jsonl` and later produced normal `.omx/artifacts/` files with exit code `0`.
 - Before treating an early wrapper return as failure or launching a duplicate review, check the referenced process/session log and newest artifact. Do not kill a still-running local review solely because the wrapper returned first.
 - The recovered focused artifacts are `.omx/artifacts/claude-independent-read-only-pipeweave-des-wave-3-decision-review-i-2026-07-19T21-18-41-544Z.md` and `.omx/artifacts/claude-you-are-the-independent-stepcode-claude-architecture-proof-r-2026-07-19T21-19-44-165Z.md`.
+- The first Wave-4 post-implementation `omx ask` session, `596cf4e7-ecd9-4795-a156-7ecd48cf0281`, recorded only session startup and the `UserPromptSubmit` hook, with no advisor output, completion record, or reusable artifact. It is transport evidence only and cannot satisfy the review gate.
+- The replacement review was kept on a PTY session and polled through completion. It exited `0` and produced `.omx/artifacts/claude-you-are-the-independent-post-implementation-reviewer-for-pip-2026-07-19T23-19-03-079Z.md` with raw verdict `APPROVE`. The artifact's incidental statement that `398` tests passed is not used as primary test evidence because the authoritative primary-lane owner set at review time was `145/145`, expanded after reconciliation to a freshly observed `147/147`.
 
 ## Independent Evidence Inventory
 

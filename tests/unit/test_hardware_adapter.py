@@ -1,7 +1,6 @@
 """Tests for event_simulator.hardware_adapter."""
 
 import json
-import tempfile
 from dataclasses import replace
 from pathlib import Path
 
@@ -76,11 +75,19 @@ def test_derive_calibration_produces_valid_entries(h100_json):
     for key, val in cal.duration_per_unit.items():
         assert val >= 0.0, f"{key} has negative calibration"
 
-    # L2 hit should be faster than DRAM miss
+    # L2 traffic should be faster than HBM traffic.
     assert cal.duration_per_unit["GlobalLoad_L2Hit"] < cal.duration_per_unit["GlobalLoad_L2Miss"]
     assert cal.duration_per_unit["GlobalStore"] == pytest.approx(
         1.0 / hw.l2_bandwidth_bytes_per_us
     )
+    assert cal.duration_per_unit["HBMRead"] == pytest.approx(
+        1.0 / hw.mem_bandwidth_bytes_per_us
+    )
+    assert cal.duration_per_unit["HBMWrite"] == cal.duration_per_unit["HBMRead"]
+    assert cal.duration_per_unit["L2Read"] == pytest.approx(
+        1.0 / hw.l2_bandwidth_bytes_per_us
+    )
+    assert cal.duration_per_unit["L2Write"] == cal.duration_per_unit["L2Read"]
 
     # MMA variants should have same rate
     assert cal.duration_per_unit["MMA"] == cal.duration_per_unit["MMA_FullTile"]
@@ -95,7 +102,7 @@ def test_derive_calibration_physical_sanity(h100_json):
     cal = derive_calibration(hw)
 
     # Memory rates are CHIP-WIDE. 1MB load from DRAM = ~0.3us on H100 (3.35 TB/s)
-    load_1mb_us = cal.duration_per_unit["GlobalLoad_L2Miss"] * 1024 * 1024
+    load_1mb_us = cal.duration_per_unit["HBMRead"] * 1024 * 1024
     assert 0.1 < load_1mb_us < 1.0
 
     # Compute rates are PER-SM. One MMA instruction per SM is measurable.
@@ -110,19 +117,29 @@ def test_derive_calibration_physical_sanity(h100_json):
 def test_derive_resource_config_gemm(h100_json):
     hw = load_hardware_config(h100_json)
     rc = derive_resource_config(hw, operator_type="gemm_v2")
-    assert rc.capacities["launch"] == 1
-    assert rc.capacities["sm"] == 132
-    assert rc.capacities["tensor_core"] == 132
-    assert rc.capacities["dram_bandwidth"] == 1  # chip-wide shared pool
-    assert rc.capacities["l2_bandwidth"] == 1  # chip-wide shared pool
+    assert dict(rc.global_capacities) == {
+        "hbm_bandwidth": 1,
+        "l2_bandwidth": 1,
+        "launch": 1,
+    }
+    assert rc.sm_count == 132
+    assert dict(rc.per_sm_capacities) == {
+        "alu": 1,
+        "barrier": 1,
+        "cta_slots": 1,
+        "sfu": 1,
+        "tensor_core": 1,
+    }
 
 
 def test_derive_resource_config_flash_attention(h100_json):
     hw = load_hardware_config(h100_json)
     rc = derive_resource_config(hw, operator_type="flash_attention")
-    assert rc.capacities["launch"] == 1
-    assert rc.capacities["tensor_core"] == 132
-    assert rc.capacities["dram_bandwidth"] == 1
+    assert rc.global_capacities["launch"] == 1
+    assert rc.global_capacities["hbm_bandwidth"] == 1
+    assert rc.global_capacities["l2_bandwidth"] == 1
+    assert rc.sm_count == hw.num_sms
+    assert rc.per_sm_capacities["tensor_core"] == 1
 
 
 @pytest.mark.parametrize(
@@ -162,8 +179,11 @@ def test_derive_resource_config_supports_known_elementwise_operators(
 
     rc = derive_resource_config(hw, operator_type=operator_type)
 
-    assert rc.capacities["sm"] == hw.num_sms
-    assert rc.capacities["global_memory"] == 1
+    assert rc.sm_count == hw.num_sms
+    assert rc.global_capacities["hbm_bandwidth"] == 1
+    assert rc.global_capacities["l2_bandwidth"] == 1
+    assert rc.per_sm_capacities["alu"] == 1
+    assert rc.per_sm_capacities["cta_slots"] == 1
 
 
 def test_loads_real_hardware_file():
@@ -174,4 +194,4 @@ def test_loads_real_hardware_file():
     hw = load_hardware_config(hw_path)
     assert hw.num_sms == 132
     cal = derive_calibration(hw)
-    assert cal.duration_per_unit["GlobalLoad_L2Miss"] > 0
+    assert cal.duration_per_unit["HBMRead"] > 0

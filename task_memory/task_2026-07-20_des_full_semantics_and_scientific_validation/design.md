@@ -4,6 +4,8 @@
 
 | Date | Summary of Changes |
 |---|---|
+| 2026-07-20 | Froze the independently approved Wave-4 manifest-only lowering, resource-specific cache-traffic, worker-lifetime, reduction, FA-affinity, hardware-topology, and validator contracts. |
+| 2026-07-20 | Advanced the approved implementation design to Wave 4 after the verified Wave-3 commit/push checkpoint. |
 | 2026-07-20 | Corrected lifetime-covered transient-demand ownership and documented the greedy scheduler's explicit no-progress policy boundary. |
 | 2026-07-20 | Froze the reviewed Wave-3 SchedulerCounters, SimulationResult, report provenance, empty-graph, placement-tie, and lifetime timing contracts. |
 | 2026-07-20 | Froze the measured-calibration, held-out zero-shot, modeled-universal theorem, comparator approval, and Phase-2 ownership contracts. |
@@ -21,7 +23,7 @@
 
 ## Status
 
-This is the **independently approved and checkpointed implementation design**. Phase 1 and the reviewed Wave-1/2 proof kernel are committed and pushed; Phase 2 Wave 3 is active. The four-layer provenance split, shared execution kernel, exact engine, cache/manifest semantics, calibration/held-out/theorem boundaries, and Accel-Sim/GPGPU-Sim dependency are resolved. StepCode Claude returned `APPROVE` at the complete design gate, both implemented module gates, and the Wave-3 pre-implementation ownership/interface gate.
+This is the **independently approved and checkpointed implementation design**. Phase 1 and reviewed Waves 1–3 are committed and pushed at `0a733ec597056924f9c10236071eb6892550080d`; Phase 2 Wave 4 is active. The four-layer provenance split, shared execution kernel, exact engine, cache/manifest semantics, calibration/held-out/theorem boundaries, and Accel-Sim/GPGPU-Sim dependency are resolved. StepCode Claude returned `APPROVE` at the complete design gate and every completed implementation/review gate, including the bounded post-Wave-3 CSV correction gate.
 
 ## Design Objective
 
@@ -408,6 +410,82 @@ Manifest validation owns:
 Required rejection cases include a K gap, overlapping K ranges, duplicate accumulator producers, orphan accumulators, reduction inputs with incompatible tile/element counts, overlapping non-split output tiles, missing final reduction, and worker assignment duplication. Dataset rows without an authoritative manifest are rejected with a counted reason. `is_split_k`, CTA/base-grid ratios, legacy floor division, shape guesses, or silent non-split substitution are prohibited.
 
 The focused independent artifact is `.omx/artifacts/claude-you-are-the-independent-stepcode-claude-architecture-reviewe-2026-07-19T18-46-20-917Z.md`. Claude returned `WATCH`. The primary reconciliation accepts the static-model naming boundary, size-aware LRU, explicit initial recency/dirty state, manifest conservation cases, accumulator width, total problem shape, and output visibility. It rejects the proposed physical partial-block read bit, redundant low-level occupancy fields, and the isolated-cache SafeBound policy. The corrected single-model contract remains WATCH until the final Phase-1 review.
+
+### Wave-4 manifest lowering and hardware boundary
+
+The independently approved public GEMM lowering is a deliberate API break:
+
+```python
+def lower_gemm_v2(
+    kernel_id: str,
+    *,
+    manifest: GemmLaunchManifest,
+    calibration: PrimitiveCalibration,
+    initial_cache_state: InitialCacheState,
+    stream_id: str = "stream-0",
+) -> EventGraph:
+    ...
+```
+
+`initial_cache_state` is required. The new path accepts no dimensions, tile
+sizes, hardware object, CTA ratio, `element_bytes`, or compatibility signature;
+the manifest is the sole source of launch policy and physical work. Every
+public `lower_*` function returns a normalized `EventGraph`. `stream_id` is
+metadata only and never creates a dependency edge.
+
+Cache resolution runs exactly once. Its immutable transitions lower through
+four resource-specific primitives:
+
+| Primitive | Global demand | Specification coefficient |
+|---|---|---|
+| `HBMRead` | `{"hbm_bandwidth": 1}` | `1 / mem_bandwidth_bytes_per_us` |
+| `HBMWrite` | `{"hbm_bandwidth": 1}` | `1 / mem_bandwidth_bytes_per_us` |
+| `L2Read` | `{"l2_bandwidth": 1}` | `1 / l2_bandwidth_bytes_per_us` |
+| `L2Write` | `{"l2_bandwidth": 1}` | `1 / l2_bandwidth_bytes_per_us` |
+
+The fixed lowering is `read_hit -> L2Read`, `read_miss -> HBMRead -> L2Write
+-> L2Read`, overwrite hit/miss `-> L2Write`, and dirty eviction or explicit
+HBM visibility `-> L2Read -> HBMWrite`. Clean eviction emits no resource-time
+Event. The sequential miss expansion is a declared fixed-model simplification,
+not a claim about physical cache-pipeline arbitration. Lowered byte totals must
+equal the one cache resolution's HBM-read, HBM-write, L2-read, and L2-write
+totals exactly.
+
+Each manifest Worker owns exactly one `ResourceLifetime`. Its zero-duration
+acquire depends on `KernelLaunch`; ordered WorkItems lower as read traffic,
+physical-issued MMA work, then overwrite traffic; and its zero-duration release
+depends on the final WorkItem tail. Reservation and eligible SMs come only from
+the Worker. No per-WorkItem lifetime or persistent boolean exists. Reduction
+steps remain outside Worker lifetimes, use `per_sm_demand={"alu": 1}` for
+their compute Event, and depend on the release or prior-reduction tail that
+produced every input accumulator. Output-flush Events are explicit
+`KernelComplete` predecessors.
+
+`derive_resource_config()` constructs global launch/HBM/L2 capacities and
+per-SM tensor-core/ALU/SFU/barrier/CTA-slot capacities. `sm_count` expresses
+replication; a per-SM capacity is never multiplied by `num_sms`. The new GEMM
+path consumes `manifest.resource_config`; any temporary `operator_type`
+dispatch is limited to the existing simple-operator transition and cannot
+become a second GEMM policy.
+
+FA retains its accepted analytical task assignment only as explicit affinity:
+every compute/sync Event has its assigned singleton `eligible_sms`, every SM
+chain is linked by dependencies, and caller/Event tuple order cannot influence
+placement. FA does not gain a `ResourceLifetime` in this wave.
+
+`tests/validation/validate_gemm_v2.py` remains the sole authoritative GEMM
+validator. It requires a `Mapping[row_index, GemmLaunchManifest]`, counts a
+missing entry as `missing_authoritative_manifest`, validates row dimensions,
+tile fields, and explicit worker/CTA count against the manifest, and propagates
+unexpected lowering/scheduling exceptions. It must not reconstruct policy from
+`is_split_k`, CTA ratios, shape, or floor division.
+
+The independent pre-implementation artifact is
+`.omx/artifacts/claude-you-are-the-independent-pre-implementation-design-reviewer-f-2026-07-19T22-43-13-316Z.md`.
+StepCode Claude Opus 4.6 at effort `max` returned `APPROVE`, required the four
+resource/dependency clarifications captured above, rejected extra expander,
+validator, lifetime, and stream-order abstractions, and authorized RED-first
+implementation.
 
 ### Calibration and held-out evaluation separation
 
