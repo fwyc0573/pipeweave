@@ -1,4 +1,5 @@
 import json
+from math import ceil
 
 from event_simulator import (
     PrimitiveCalibration,
@@ -58,6 +59,25 @@ def test_gemm_lowering_emits_cta_wave_events():
     assert event_types.count("MMA") == 4
     assert event_types.count("GlobalStore") == 4
     assert event_types[-1] == "KernelComplete"
+
+
+def test_gemm_lowering_counts_two_flops_per_multiply_accumulate():
+    events = lower_gemm(
+        "gemm-work",
+        m=16,
+        n=16,
+        k=256,
+        tile_m=16,
+        tile_n=16,
+        calibration=CALIBRATION,
+    )
+
+    mma_event = next(event for event in events if event.event_type == "MMA")
+    expected_instructions = ceil(2 * 16 * 16 * 256 / 256)
+
+    assert expected_instructions == 512
+    assert mma_event.instruction_count == expected_instructions
+    assert mma_event.duration == CALIBRATION.duration("MMA", expected_instructions)
 
 
 def test_rmsnorm_lowering_emits_reduction_and_barrier_events():

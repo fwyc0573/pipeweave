@@ -1,5 +1,6 @@
 """Mechanistic event-level simulation primitives for PipeWeave research."""
 
+from .comparison import BoundComparison, compare_des_bound
 from .events import EVENT_TYPES, Event
 from .hardware_adapter import HardwareConfig, derive_calibration, derive_resource_config, load_hardware_config
 from .operators import lower_flash_attention, lower_gemm, lower_gemm_v2, lower_rmsnorm, lower_silu_and_mul
@@ -16,6 +17,7 @@ from .scheduler import SimulationResult, schedule
 
 __all__ = [
     "EVENT_TYPES",
+    "BoundComparison",
     "Event",
     "HardwareConfig",
     "PrimitiveCalibration",
@@ -23,6 +25,7 @@ __all__ = [
     "SimulationReport",
     "SimulationResult",
     "build_report",
+    "compare_des_bound",
     "compute_actual_tile_dims",
     "compute_l2_hit_ratio",
     "compute_tile_efficiency",

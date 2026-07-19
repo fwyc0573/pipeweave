@@ -44,9 +44,9 @@ def compute_l2_hit_ratio(
     Uses a continuous formula: effective_capacity / max(capacity, working_set).
     This ensures monotonic decrease as working set grows (no discontinuity).
 
-    For the "refined roofline" lower bound, this is an OPTIMISTIC estimate:
-    real L2 behavior may be worse due to partition camping or replacement policy,
-    so this never causes DES_time > actual_time.
+    This is an analytical hit-ratio estimate only. Callers must declare the
+    cache-state and traffic boundary independently; this helper does not certify
+    a composed schedule as a latency lower bound.
 
     Returns a float in [0.0, 1.0] representing the fraction of global
     loads that hit in L2 cache.

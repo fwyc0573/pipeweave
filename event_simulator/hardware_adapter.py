@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from math import isfinite
+from numbers import Real
 from pathlib import Path
 from typing import Mapping
 
@@ -129,14 +131,14 @@ def derive_resource_config(
                 "sm": hw.num_sms,
                 "tensor_core": hw.num_sms,
                 "dram_bandwidth": 1,
-                "l2_bandwidth": hw.num_sms,
+                "l2_bandwidth": 1,
                 "global_memory": 1,
                 "alu": hw.num_sms,
                 "sfu": hw.num_sms,
                 "barrier": hw.num_sms,
             }
         )
-    elif operator_type == "flash_attention":
+    if operator_type == "flash_attention":
         return ResourceConfig(
             {
                 "launch": 1,
@@ -144,7 +146,7 @@ def derive_resource_config(
                 "dram_bandwidth": 1,
             }
         )
-    else:
+    if operator_type in ("rmsnorm", "silu_and_mul"):
         return ResourceConfig(
             {
                 "launch": 1,
@@ -155,6 +157,7 @@ def derive_resource_config(
                 "barrier": hw.num_sms,
             }
         )
+    raise ValueError(f"unknown operator_type: {operator_type}")
 
 
 def derive_calibration(hw: HardwareConfig) -> PrimitiveCalibration:
@@ -164,8 +167,8 @@ def derive_calibration(hw: HardwareConfig) -> PrimitiveCalibration:
 
     Memory bandwidth model: DRAM and L2 bandwidth are CHIP-WIDE shared resources.
     The calibration gives duration per byte at CHIP-WIDE peak rate.
-    The ResourceConfig uses a SINGLE lane for DRAM, so the scheduler naturally
-    serializes all DRAM events into a total bandwidth bottleneck.
+    The ResourceConfig uses a SINGLE lane for each chip-wide bandwidth pool, so
+    the scheduler serializes demand at the declared aggregate rate.
 
     Compute model: Tensor cores are PER-SM resources (one lane per SM in
     ResourceConfig). Each CTA's compute duration = work / per_SM_rate.
@@ -177,24 +180,39 @@ def derive_calibration(hw: HardwareConfig) -> PrimitiveCalibration:
     - MMA instruction = 256 FLOPs (matches aggregator.py convention)
     - MMA count = 2*M*N*K / 256 (flops = 2*M*N*K, 256 FLOPs per MMA)
 
-    For bound validity: peak rates give MINIMUM achievable time (most ideal).
-    Guarantee: DES_time ≤ actual_time.
+    Peak rates provide idealized primitive durations. Bound acceptance is a
+    separate validation step and is not certified by this function.
     """
+    dram_bytes_per_us = _require_positive_rate(
+        "mem_bandwidth_bytes_per_us", hw.mem_bandwidth_bytes_per_us
+    )
+    l2_bytes_per_us = _require_positive_rate(
+        "l2_bandwidth_bytes_per_us", hw.l2_bandwidth_bytes_per_us
+    )
+    tc_flops_per_sm_per_us = _require_positive_rate(
+        "tc_bf16_flops_per_sm_per_us", hw.tc_bf16_flops_per_sm_per_us
+    )
+    fma_ops_per_sm_per_us = _require_positive_rate(
+        "fma_fp32_ops_per_sm_per_us", hw.fma_fp32_ops_per_sm_per_us
+    )
+    xu_ops_per_sm_per_us = _require_positive_rate(
+        "xu_fp32_ops_per_sm_per_us", hw.xu_fp32_ops_per_sm_per_us
+    )
+
     # Memory: CHIP-WIDE bandwidth (single shared pool)
-    dram_us_per_byte = 1.0 / hw.mem_bandwidth_bytes_per_us
-    l2_us_per_byte = 1.0 / hw.l2_bandwidth_bytes_per_us
+    dram_us_per_byte = 1.0 / dram_bytes_per_us
+    l2_us_per_byte = 1.0 / l2_bytes_per_us
 
     # Compute: PER-SM throughput
     # MMA: each instruction = 256 FLOPs, rate = tc_bf16 × sm_freq / 256 instrs/us/SM
-    mma_instrs_per_sm_per_us = hw.tc_bf16_flops_per_sm_per_us / 256.0
-    mma_us_per_instr = 1.0 / mma_instrs_per_sm_per_us if mma_instrs_per_sm_per_us > 0 else 0.0
+    mma_instrs_per_sm_per_us = tc_flops_per_sm_per_us / 256.0
+    mma_us_per_instr = 1.0 / mma_instrs_per_sm_per_us
 
-    fma_us_per_op = 1.0 / hw.fma_fp32_ops_per_sm_per_us if hw.fma_fp32_ops_per_sm_per_us > 0 else 0.0
-    xu_us_per_op = 1.0 / hw.xu_fp32_ops_per_sm_per_us if hw.xu_fp32_ops_per_sm_per_us > 0 else 0.0
+    fma_us_per_op = 1.0 / fma_ops_per_sm_per_us
+    xu_us_per_op = 1.0 / xu_ops_per_sm_per_us
 
-    # Fixed overheads: zero for pure roofline bound (these are real but not
-    # part of the compute/memory roofline). Setting to zero ensures the bound
-    # reflects only the structural compute and memory costs.
+    # Fixed overheads are zero to isolate the idealized compute/memory estimate.
+    # Omitting these real costs does not certify the composed schedule as a bound.
     kernel_launch_us = 0.0
     kernel_complete_us = 0.0
     cta_admission_us = 0.0
@@ -213,7 +231,7 @@ def derive_calibration(hw: HardwareConfig) -> PrimitiveCalibration:
             "GlobalLoad": dram_us_per_byte,
             "GlobalLoad_L2Hit": l2_us_per_byte,
             "GlobalLoad_L2Miss": dram_us_per_byte,
-            "GlobalStore": dram_us_per_byte,
+            "GlobalStore": l2_us_per_byte,
             # Compute
             "MMA": mma_us_per_instr,
             "MMA_FullTile": mma_us_per_instr,
@@ -233,3 +251,14 @@ def derive_calibration(hw: HardwareConfig) -> PrimitiveCalibration:
             "FA_TaskSync": 0.0,
         }
     )
+
+
+def _require_positive_rate(name: str, value: Real) -> float:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, Real)
+        or not isfinite(value)
+        or value <= 0
+    ):
+        raise ValueError(f"{name} must be finite and positive")
+    return float(value)

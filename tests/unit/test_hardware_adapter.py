@@ -2,6 +2,7 @@
 
 import json
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -77,6 +78,9 @@ def test_derive_calibration_produces_valid_entries(h100_json):
 
     # L2 hit should be faster than DRAM miss
     assert cal.duration_per_unit["GlobalLoad_L2Hit"] < cal.duration_per_unit["GlobalLoad_L2Miss"]
+    assert cal.duration_per_unit["GlobalStore"] == pytest.approx(
+        1.0 / hw.l2_bandwidth_bytes_per_us
+    )
 
     # MMA variants should have same rate
     assert cal.duration_per_unit["MMA"] == cal.duration_per_unit["MMA_FullTile"]
@@ -110,7 +114,7 @@ def test_derive_resource_config_gemm(h100_json):
     assert rc.capacities["sm"] == 132
     assert rc.capacities["tensor_core"] == 132
     assert rc.capacities["dram_bandwidth"] == 1  # chip-wide shared pool
-    assert rc.capacities["l2_bandwidth"] == 132  # per-SM parallel slices
+    assert rc.capacities["l2_bandwidth"] == 1  # chip-wide shared pool
 
 
 def test_derive_resource_config_flash_attention(h100_json):
@@ -119,6 +123,47 @@ def test_derive_resource_config_flash_attention(h100_json):
     assert rc.capacities["launch"] == 1
     assert rc.capacities["tensor_core"] == 132
     assert rc.capacities["dram_bandwidth"] == 1
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("mem_bandwidth_gb_s", 0.0),
+        ("l2_cache_bandwidth_gb_s", 0.0),
+        ("tc_bf16", 0.0),
+        ("fma_fp32", 0.0),
+        ("xu_fp32", 0.0),
+        ("sm_freq_mhz", 0.0),
+        ("mem_bandwidth_gb_s", float("inf")),
+        ("tc_bf16", float("nan")),
+    ],
+)
+def test_derive_calibration_rejects_non_positive_required_rates(
+    h100_json, field, value
+):
+    hw = replace(load_hardware_config(h100_json), **{field: value})
+
+    with pytest.raises(ValueError, match="must be finite and positive"):
+        derive_calibration(hw)
+
+
+def test_derive_resource_config_rejects_unknown_operator_type(h100_json):
+    hw = load_hardware_config(h100_json)
+
+    with pytest.raises(ValueError, match="unknown operator_type"):
+        derive_resource_config(hw, operator_type="unknown")
+
+
+@pytest.mark.parametrize("operator_type", ["rmsnorm", "silu_and_mul"])
+def test_derive_resource_config_supports_known_elementwise_operators(
+    h100_json, operator_type
+):
+    hw = load_hardware_config(h100_json)
+
+    rc = derive_resource_config(hw, operator_type=operator_type)
+
+    assert rc.capacities["sm"] == hw.num_sms
+    assert rc.capacities["global_memory"] == 1
 
 
 def test_loads_real_hardware_file():

@@ -81,20 +81,42 @@ class TestGemmV2MemoryModel:
         max_bytes = (4096 * 4096 + 4096 * 4096) * 2
         assert 0 < dram_events[0].bytes <= max_bytes
 
-    def test_b_reuse_reduces_dram_traffic(self, h100_hw, h100_cal, h100_rc):
-        # With m_tiles > 1, B gets L2 reuse → effective DRAM < full B
+    def test_cold_input_traffic_counts_unique_a_and_b_once(self, h100_hw, h100_cal, h100_rc):
         m, n, k, tile_m, tile_n = 256, 256, 512, 128, 128
         element_bytes = 2
         events = lower_gemm_v2(
-            "gemm-reuse", m=m, n=n, k=k,
+            "gemm-cold-inputs", m=m, n=n, k=k,
             tile_m=tile_m, tile_n=tile_n,
             calibration=h100_cal, hardware=h100_hw, element_bytes=element_bytes,
         )
         dram_events = [e for e in events if e.event_type == "GlobalLoad_L2Miss"]
         assert len(dram_events) == 1
-        # m_tiles=2, so B reuse factor >= 2 → effective B < full B
-        full_input = (m * k + n * k) * element_bytes
-        assert dram_events[0].bytes < full_input
+        unique_input_bytes = (m * k + n * k) * element_bytes
+        assert dram_events[0].bytes == unique_input_bytes
+
+    def test_cold_traffic_and_makespan_are_monotonic_for_fixed_policy(
+        self, h100_hw, h100_cal, h100_rc
+    ):
+        results = []
+        for m in (128, 129):
+            events = lower_gemm_v2(
+                f"gemm-monotonic-{m}",
+                m=m,
+                n=4096,
+                k=64,
+                tile_m=128,
+                tile_n=16,
+                calibration=h100_cal,
+                hardware=h100_hw,
+            )
+            dram_event = next(
+                event for event in events if event.event_type == "GlobalLoad_L2Miss"
+            )
+            results.append((dram_event.bytes, schedule(events, h100_rc).makespan))
+
+        (smaller_bytes, smaller_time), (larger_bytes, larger_time) = results
+        assert larger_bytes >= smaller_bytes
+        assert larger_time >= smaller_time
 
     def test_always_uses_dram_bandwidth(self, h100_hw, h100_cal, h100_rc):
         # Even for small inputs, chip-level event uses DRAM (cold miss)

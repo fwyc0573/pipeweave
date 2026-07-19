@@ -8,7 +8,6 @@ from .resources import PrimitiveCalibration
 from .structural import (
     ceil_div,
     compute_actual_tile_dims,
-    compute_l2_hit_ratio,
     compute_wave_split,
     is_edge_tile,
 )
@@ -98,7 +97,7 @@ def lower_gemm(
             store_id = f"{cta_id}:store"
             load_bytes = (actual_m * k + actual_n * k) * element_bytes
             store_bytes = actual_m * actual_n * element_bytes
-            mma_instructions = ceil(actual_m * actual_n * k / 256)
+            mma_instructions = ceil(2 * actual_m * actual_n * k / 256)
             events.extend(
                 [
                     _event(
@@ -388,19 +387,13 @@ def lower_gemm_v2(
 ) -> list[Event]:
     """Lower a tiled GEMM with structural decomposition.
 
-    Compared to lower_gemm, this version models:
-    - L2 cache hit/miss split for memory loads (using tile_K working set)
-    - Full-wave vs tail-wave CTA admission
-    - Full vs partial tile MMA efficiency
-    - Pipeline overlap: load and compute run in parallel
+    Compared to lower_gemm, this version emits a chip-level cold-input event,
+    full-wave/tail-wave admission labels, full/partial useful-work events, and
+    an explicit load/compute/store dependency graph.
 
-    The resulting event DAG produces a tighter lower bound on execution
-    time by capturing these structural effects explicitly.
-
-    The tile_k parameter controls L2 working set estimation. When tile_k > 0,
-    the live working set per CTA is (tile_m*tile_k + tile_n*tile_k) bytes
-    (only one K-iteration's data is live at a time due to double-buffering).
-    When tile_k == 0 (default), falls back to using full K dimension.
+    ``tile_k`` is retained for dataset and interface compatibility, but it does
+    not yet change event timing. Cache residency and K-stage pipeline behavior
+    require a separate execution model.
     """
 
     for name, value in (
@@ -439,27 +432,12 @@ def lower_gemm_v2(
         )
     ]
 
-    # Chip-level memory event: effective DRAM traffic accounting for L2 reuse.
-    # Output C excluded (L2 writeback, not on critical path).
-    #
-    # DRAM traffic model:
-    # - A matrix (M×K): loaded once from DRAM (unique, no reuse across CTAs)
-    # - B matrix (N×K): each tile-column is reused by m_tiles CTA-rows.
-    #   If a B tile-column fits in L2, only the first access goes to DRAM;
-    #   subsequent CTA-rows hit L2. Effective DRAM for B = N×K / reuse_factor.
-    #   reuse_factor = min(m_tiles, effective_L2 / b_column_bytes).
-    #   For valid lower bound: use maximum feasible reuse (most optimistic).
+    # Cold-HBM boundary: each unique input byte must enter the device once.
+    # Intra-kernel reuse does not reduce this mandatory first-touch traffic.
+    # Output C terminates at the separately modeled L2 store boundary.
     a_bytes = m * k * element_bytes
     b_bytes = n * k * element_bytes
-    b_tile_col_bytes = tile_n * k * element_bytes
-    # How many CTA-rows can reuse the same B tile-column from L2?
-    # Limited by: L2 size / (b_tile_col + working data of concurrent CTAs)
-    b_reuse_factor = min(
-        m_tiles,
-        max(1, hardware.l2_cache_size_bytes // max(1, b_tile_col_bytes))
-    )
-    effective_b_dram = b_bytes // b_reuse_factor
-    total_effective_dram_bytes = a_bytes + effective_b_dram
+    total_effective_dram_bytes = a_bytes + b_bytes
 
     dram_event_id = f"{kernel_id}:mem-total"
     events.append(
@@ -521,8 +499,7 @@ def lower_gemm_v2(
             )
         )
 
-        # 3. Store — depends on MMA completing. Uses L2 writeback path
-        #    (not the chip-level DRAM lane; output bytes already counted there).
+        # 3. Store — depends on MMA completing and terminates at the L2 boundary.
         store_bytes = actual_m * actual_n * element_bytes
         store_id = f"{cta_id}:store"
         events.append(
@@ -622,29 +599,46 @@ def lower_flash_attention(
 
     Compute model:
     - Per-SM MMA compute chains (tensor_core lanes, per-SM rate)
-    - MMA dominates XU by ~248x; XU safely omitted for roofline bound
+    - XU work is omitted by this experimental task-level model; the omission
+      does not certify the composed schedule as a lower bound
     """
 
-    if batch_size <= 0:
-        raise ValueError("batch_size must be positive")
+    _positive_integer("batch_size", batch_size)
     if len(q_lengths) != batch_size or len(kv_lengths) != batch_size:
         raise ValueError("q_lengths and kv_lengths must have length batch_size")
-    if num_qo_heads <= 0 or num_kv_heads <= 0 or head_dim <= 0:
-        raise ValueError("num_qo_heads, num_kv_heads, head_dim must be positive")
+    for index, length in enumerate(q_lengths):
+        _positive_integer(f"q_lengths[{index}]", length)
+    for index, length in enumerate(kv_lengths):
+        _positive_integer(f"kv_lengths[{index}]", length)
+    _positive_integer("num_qo_heads", num_qo_heads)
+    _positive_integer("num_kv_heads", num_kv_heads)
+    _positive_integer("head_dim", head_dim)
+    if num_qo_heads % num_kv_heads != 0:
+        raise ValueError("num_qo_heads must be divisible by num_kv_heads")
     _positive_integer("element_bytes", element_bytes)
+    supported_attention_types = {
+        "fa2_paged",
+        "fa2_ragged",
+        "fa3_paged",
+        "fa3_ragged",
+    }
+    if (
+        not isinstance(attention_type, str)
+        or attention_type not in supported_attention_types
+    ):
+        raise ValueError(f"unsupported attention_type: {attention_type}")
 
     fa = _import_fa_schedulers()
 
     # Step 1: Determine tile sizes and run FA scheduler
-    is_fa3 = "fa3" in attention_type
-    layout = "paged" if "paged" in attention_type else "ragged"
+    is_fa3 = attention_type.startswith("fa3")
+    layout = attention_type.split("_", maxsplit=1)[1]
 
     if is_fa3:
         cta_q, cta_kv = fa["FA3GetCTATileSize"](head_dim, head_dim, layout, causal)
 
         # Determine same_schedule_for_all_heads threshold
-        total_q_tiles = sum(ceil_div(q, cta_q) for q in q_lengths)
-        max_num_works_per_head = total_q_tiles * batch_size
+        max_num_works_per_head = ceil_div(sum(q_lengths), cta_q) + batch_size - 1
         same_schedule = max_num_works_per_head > 8192
 
         sm_task_iterations = fa["fa3_scheduler"](
@@ -662,18 +656,31 @@ def lower_flash_attention(
         head_multiplier = num_qo_heads if same_schedule else 1
     else:
         # FA2 path
-        avg_q = sum(q_lengths) // batch_size
         gqa_group_size = num_qo_heads // num_kv_heads
-        cta_q = fa["FA2DetermineCtaTileQ"](avg_q * gqa_group_size, head_dim)
+        packed_qo_lengths = [length * gqa_group_size for length in q_lengths]
+        avg_packed_qo_length = sum(packed_qo_lengths) // batch_size
+        cta_q = fa["FA2DetermineCtaTileQ"](avg_packed_qo_length, head_dim)
         cta_kv = 64
 
-        kv_chunk_size = fa["PrefillBinarySearchKVChunkSize"](
-            max(kv_lengths), batch_size, hardware.num_sms, cta_q
+        max_batch_size_if_split = 2 * hardware.num_sms // num_kv_heads
+        page_size = 16 if layout == "paged" else 1
+        _, kv_chunk_size = fa["PrefillBinarySearchKVChunkSize"](
+            max_batch_size_if_split=max_batch_size_if_split,
+            packed_qo_len_arr=packed_qo_lengths,
+            kv_len_arr=list(kv_lengths),
+            qo_chunk_size=cta_q,
+            min_kv_chunk_size=max(128 // page_size, 1),
         )
 
         cta_workload = fa["create_fa2_cta_workload"](
-            q_lengths, kv_lengths, num_kv_heads, causal,
-            cta_q, cta_kv, gqa_group_size, kv_chunk_size
+            q_lengths=q_lengths,
+            kv_lengths=kv_lengths,
+            num_kv_heads=num_kv_heads,
+            causal=causal,
+            cta_tile_q=cta_q,
+            cta_tile_kv=cta_kv,
+            gqa_group_size=gqa_group_size,
+            kv_chunk_size=kv_chunk_size,
         )
 
         scheduler_obj = fa["fa2_scheduler_cls"](hardware.num_sms, max_ctas_per_sm=2)

@@ -1,5 +1,11 @@
 # PipeWeave: Synergizing Analytical and Learning Models for Unified GPU Performance Prediction
 
+## Modification History
+
+| Date | Summary of Changes |
+|---|---|
+| 2026-07-18 | Corrected the DES research status, supported surface, bound semantics, public comparison API, and post-fix H100 evidence. |
+
 This repository contains the artifact for the ISCA 2026 paper:
 
 > **PipeWeave: Synergizing Analytical and Learning Models for Unified GPU Performance Prediction**
@@ -131,13 +137,39 @@ Generates comparison CSVs under `e2e/` with MAPE and other accuracy metrics agai
 
 ---
 
-## Experimental Event-Level Simulator
+## Experimental DES Event-Level Simulator
 
 The `des` branch also contains an independent research MVP under
 `event_simulator/`. Unlike the existing analytical-plus-ML path, this simulator
 does not use MLP/RF predictions to close the final latency equation. It lowers
 supported operators into explicit events and derives duration from dependencies,
 resource capacity, and caller-supplied primitive calibration.
+
+The current DES is a deterministic, mechanistic, event-level analytical
+prototype. Its greedy list scheduler produces an auditable feasible schedule
+for the modeled Event DAG; that schedule is **not a certified lower bound** on
+real hardware latency or on the optimum schedule of the modeled DAG.
+
+### Current scientific status
+
+| Goal | Status | Current evidence boundary |
+|---|---|---|
+| More interpretable than an ML latency closure | **Established structurally / Experimental scientifically** | Event work, dependencies, resources, timeline, and the selected critical path are explicit; no comparative user study or attribution-agreement study has been completed. |
+| Tighter than a classical roofline | **Unproven globally** | After launch-policy rejection, DES was tighter on `24/24` Large, `80/83` Medium, and `26/26` Other both-valid sampled rows, but only `1/58` Small rows (`29` classical tighter, `28` equal); `4` Small DES violations remain. |
+| `10000x` faster than a cycle-accurate simulator | **Unproven** | No named, matched cycle-accurate comparator exists in this repository. A reviewed `58,467`-event GEMM took `115.882818766s`, so DSE scalability is also not yet established. |
+| Cross-hardware zero-shot accuracy | **Unproven** | The path uses hardware specifications and no learned latency closure, but no held-out multi-hardware DES evaluation has established empirical transfer. |
+| Universal theoretical lower bound | **Blocked** | Input-order-dependent greedy scheduling, unsupported launch policies, and real bound violations prevent certification. |
+
+### Implemented surface
+
+- **Established:** fail-fast Event IR/resource validation, deterministic
+  scheduling, timelines, resource busy time, kernel duration, and the bounded
+  comparison helper.
+- **Experimental:** legacy GEMM, GEMM v2, RMSNorm, SiLU-and-Mul, and task-level
+  FA2/FA3 lowering on a single device.
+- **Not modeled:** cache residency/hierarchy, persistent CTA lifetime,
+  split-K replicated work and reduction, warp scheduling, NCCL, pipeline
+  parallel timing, and online request scheduling.
 
 ```python
 from event_simulator import (
@@ -169,10 +201,32 @@ print(report.to_dict())
 ```
 
 All calibration values must use one consistent time unit; microseconds are
-recommended. Missing calibration and unknown resources fail immediately. The
-MVP supports a single device plus GEMM, RMSNorm, and SiLU-and-Mul lowering. It
-does not yet model attention, cache hierarchy, warp scheduling, NCCL, pipeline
-parallel timing, or online request scheduling.
+recommended. Missing calibration, non-positive required hardware rates, unknown
+resources, and unknown operator types fail immediately.
+
+For a candidate time value that has been accepted as a valid positive lower
+bound by an external validation step, use the explicit comparison API:
+
+```python
+from event_simulator import compare_des_bound
+
+comparison = compare_des_bound(actual_time=4.0, des_bound=3.0)
+assert comparison.optimization_gap == 0.25
+assert comparison.hardware_efficiency == 0.75
+```
+
+The contract is:
+
+```text
+0 < des_bound <= actual_time
+optimization_gap = (actual_time - des_bound) / actual_time
+hardware_efficiency = des_bound / actual_time
+optimization_gap + hardware_efficiency = 1
+```
+
+`compare_des_bound` rejects non-finite, non-positive, or violating values. It
+does not accept a `SimulationResult` implicitly and does not certify the
+provenance of a scheduler makespan.
 
 See [`docs/event_simulator_design.md`](docs/event_simulator_design.md) for the
 codebase analysis, measurement boundary, architecture, risks, and staged plan.
