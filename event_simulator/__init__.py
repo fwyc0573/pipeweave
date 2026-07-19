@@ -12,6 +12,7 @@ from .structural import (
     is_edge_tile,
 )
 from .report import SimulationReport, build_report
+from .safe_bound import SafeBound, SafeBoundEvaluator
 from .resources import PrimitiveCalibration, ResourceConfig
 from .scheduler import SimulationResult, schedule
 
@@ -22,6 +23,8 @@ __all__ = [
     "HardwareConfig",
     "PrimitiveCalibration",
     "ResourceConfig",
+    "SafeBound",
+    "SafeBoundEvaluator",
     "SimulationReport",
     "SimulationResult",
     "build_report",
