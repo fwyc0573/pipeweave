@@ -1,0 +1,173 @@
+# DES Full Semantics and Scientific Validation Issues
+
+## Modification History
+
+| Date | Summary of Changes |
+|---|---|
+| 2026-07-20 | Resolved the comparator approval issue and froze modeled-universal, held-out, and calibration evidence boundaries. |
+| 2026-07-20 | Narrowed the missing comparator to a source-backed Accel-Sim A100 candidate and recorded its explicit approval/build prerequisites. |
+| 2026-07-20 | Selected exhaustive serial SGS for the small exact oracle and added its self-contained coverage proof and independent time-grid audit. |
+| 2026-07-20 | Added the static cache-order versus hardware-interleaving boundary and corrected the reviewed lower-bound direction. |
+| 2026-07-20 | Added the corrected lifetime-deadlock and scheduler-complexity issues found while reconciling the shared execution review. |
+| 2026-07-20 | Corrected the analytical provenance of `tensor_all_ops` and added the missing measured-counter evidence issue. |
+| 2026-07-20 | Added the exact-engine review arithmetic/proof inconsistency and narrowed the remaining decision to an exhaustive standard-library oracle candidate. |
+| 2026-07-20 | Resolved the four-layer exact-bound ambiguity and added quantified split-K, partial-tile, and report-provenance issues. |
+| 2026-07-20 | Updated the solver-dependency issue with current SciPy/HiGHS availability, absent project packaging, and formulation-proof requirements. |
+| 2026-07-20 | Added implicit stream-order, exact-certificate, and unapproved-solver risks found by source inspection and preliminary Claude review. |
+| 2026-07-20 | Added quantified cross-architecture coverage and authoritative-benchmark fail-fast issues from the evidence audit. |
+| 2026-07-20 | Initialized the semantic, architecture, benchmark, calibration, and universal-claim issue register. |
+
+## Open Issues
+
+### FSV-001 — “Exact bound” has two materially different meanings
+
+- **Status:** Resolved on 2026-07-20 by the user's Option A selection.
+- **Root cause:** Exact modeled optimum and scalable analytical lower bound are different mathematical objects. General resource-constrained scheduling is not expected to have a scalable exact solver without a restricted domain.
+- **Impact:** The implementation must preserve four distinct contracts and may not implicitly convert among them.
+- **Resolution:** Provide an exact modeled optimum, scalable safe analytical bound, deterministic feasible schedule, and measured-hardware comparison as separate result/evidence layers. Concrete APIs and engines remain subject to the remaining design decisions.
+
+### FSV-002 — Universal modeled theorem and universal hardware claim are not separated in the request
+
+- **Status:** Design resolved; proof and empirical audit pending.
+- **Root cause:** Event-model proofs quantify over declared abstractions; real hardware contains behavior outside that abstraction and requires matched empirical evidence.
+- **Impact:** The requested universal lower-bound claim could otherwise overstate evidence.
+- **Resolution:** The universal theorem quantifies only over a finite normalized fixed-duration EventGraph with explicit dependencies, declared global/per-SM capacities, and one manifest-order resolved cache state. Affinity and lifetime reservations may be removed only as named relaxations. Real hardware receives a separate finite empirical audit that reports every violation and makes no universal claim.
+
+### FSV-003 — Current Event IR cannot express requested execution semantics
+
+- **Status:** Design resolved; implementation pending.
+- **Root cause:** An Event owns at most one `resource` and has no simultaneous demand, CTA lifetime, affinity, cache state, persistent grouping, or split-K metadata.
+- **Impact:** Items 4–8 cannot be represented or tested faithfully.
+- **Resolution:** Use one immutable Event specification, one normalized EventGraph, one ScheduleEntry result, one ResourceLifetime reservation, and one two-level ResourceConfig. The exact oracle, SafeBound, scheduler, and report share that boundary; no duplicate graph or resource validator is permitted.
+
+### FSV-004 — Current scheduler is order-sensitive and approximately quadratic
+
+- **Status:** Design resolved; TDD rewrite and measurement pending.
+- **Root cause:** The greedy scheduler repeatedly scans the caller-provided Event list and schedules the first ready item.
+- **Evidence:** The same DAG yields makespans `21.0` and `11.0` under two input orders; historical `58,467`-event runtime was `115.882818766s`.
+- **Impact:** It is not a public bound and is unsuitable for large design-space claims.
+- **Resolution:** Use descending remaining dependency-path duration with `event_id` tie-break, explicit dependencies only, atomic placement, and separately instrument graph/heap work, ready scans, placement checks, and wall-clock runtime. No unsupported total asymptotic claim is accepted.
+
+### FSV-005 — Cache/residency contract is absent
+
+- **Status:** Design resolved; implementation and matched evidence pending.
+- **Root cause:** Current lowering uses aggregate cold traffic and has no literal cache state, transition, capacity, or eviction model.
+- **Impact:** Warm-L2 causes cannot be asserted, and monotonic/traffic-conservation reasoning is incomplete.
+- **Resolution:** Use one fully associative, size-aware, deterministic LRU HBM+abstract-L2 model over a canonical manifest access order, with explicit initial recency/dirty state and output visibility. It is manifest-order modeled evidence, not a hardware-universal cache theorem.
+
+### FSV-006 — Persistent CTA, split-K, and partial-tile metadata are unmatched
+
+- **Status:** Design resolved; authoritative manifests and implementation pending.
+- **Root cause:** Current lowering does not consume full measured launch-policy semantics; `tile_k` is behaviorally inert, split-K replication/reduction is absent, and partial tiles count useful work only.
+- **Evidence:** Historical H100 coverage supported `4,246/10,800` rows; `6,554/10,800` had CTA mismatch; all `437/437` split-K rows were unsupported. Across the full split-K dataset, CTA ratios do not uniquely recover a split factor: H100/H200/H800 have non-integer ratios from `1.178571` to `4.137931`, H20 has `85` rows below the base CTA grid and a minimum ratio of `0.131313`, and several other targets have thousands of rows with `cta_count == base_ctas` despite `is_split_k=1`. For non-split Hopper rows, `tensor_all_ops` equals a simple padded-tile formula in H100 `9,366/10,363`, H20 `9,202/9,534`, H200 `9,358/10,392`, and H800 `9,379/10,343`, but p95 padded ratios above `1.0` remain on three targets.
+- **Impact:** Structural comparisons cannot claim matched execution.
+- **Resolution:** `GemmLaunchManifest` is the sole new-path policy source. Worker assignment expresses persistent CTAs; explicit K partitions and accumulator topology express split-K; logical and issued extents derive useful and physical work. Rows without authoritative manifests are counted and rejected.
+
+### FSV-007 — No matched cycle-accurate comparator exists in the repository
+
+- **Status:** Dependency/toolchain approved by the user; provisioning and benchmark evidence pending.
+- **Root cause:** Existing data contains hardware measurements and DES outputs but no named cycle-accurate simulator runtime/result for the same workload and boundary.
+- **Impact:** Item 9 and any speedup claim are currently UNPROVEN.
+- **Resolution:** The user approved pinned Accel-Sim Framework/GPGPU-Sim plus a pinned CUDA/`nvcc` environment for one synthetic A100 matched GEMM. Phase 2 must provision and verify exact revisions/config hashes and report it as a GPGPU-Sim cycle-level PTX-mode comparison. No `nsys`, Hopper, pre-traced, or silicon-equivalence substitution is allowed.
+
+### FSV-008 — Held-out multi-hardware protocol is absent
+
+- **Status:** Design resolved; execution pending.
+- **Root cause:** The dataset names multiple hardware targets, but the current end-to-end validator is materially centered on H100 and no frozen held-out protocol exists.
+- **Impact:** Item 10 is currently UNPROVEN.
+- **Resolution:** Run four fixed leave-one-hardware-out Hopper folds over H100/H20/H200/H800 using only target hardware specifications and explicit launch manifests; target latency is read once for final scoring. Cross-architecture results are reported only after authoritative manifests yield nonzero support, with every unsupported row counted.
+
+### FSV-009 — Calibration can contaminate zero-shot evidence
+
+- **Status:** Design resolved; campaign pending.
+- **Root cause:** Target-hardware measured calibration and target-held-out zero-shot evaluation use incompatible data-access rules unless explicitly separated.
+- **Impact:** Items 10 and 11 could become circular.
+- **Resolution:** Zero-shot folds use specification-derived target rates and no target primitive or operator timing. A separate measured-primitive-calibrated study may use target primitive measurements but is explicitly non-zero-shot; it cannot use complete-operator latency or silently certify a real-hardware lower bound.
+
+### FSV-010 — Existing small-row bound violations are not causally attributed
+
+- **Status:** Open scientific risk.
+- **Root cause:** Measurement/model boundary mismatch has not been isolated among cache state, launch policy, scheduling, timing visibility, and provenance.
+- **Evidence:** Four historical rows had actual/DES values `10.472800/11.358228`, `10.619200/11.324017`, `8.213200/10.016648`, and `10.056400/10.243910` microseconds.
+- **Impact:** Universal measured-hardware lower-bound acceptance is currently contradicted.
+- **Resolution required:** Use matched semantics and measurements; do not clamp, scale, skip, or label warm-L2 without evidence.
+
+### FSV-011 — Current multi-hardware support is Hopper-only
+
+- **Status:** Open; depends on persistent/split-K semantics.
+- **Root cause:** All measured rows for seven Ampere, Ada, and Blackwell hardware targets use split-K, which the current validator rejects.
+- **Evidence:** Current-policy support is H100 `4,246`, H20 `2,879`, H200 `4,239`, H800 `3,800`, total `15,164`; every other target has `0/10,800` supported rows.
+- **Impact:** A current offline study can establish only within-Hopper held-out evidence, not broad cross-architecture zero-shot.
+- **Resolution required:** Complete matched split-K/persistent semantics before the cross-architecture study, and label interim evidence narrowly.
+
+### FSV-012 — Existing FA3 benchmark control flow is not authoritative
+
+- **Status:** Open; relevant only if reused.
+- **Root cause:** `tests/validation/benchmark_fa3.py` catches broad exceptions and continues, while this task requires fail-fast evidence.
+- **Impact:** Missing configurations could be hidden and completeness metrics corrupted.
+- **Resolution required:** If the benchmark becomes part of this task, first add a RED test and remove the catch-all continuation at its root cause; otherwise do not cite it as authoritative evidence.
+
+### FSV-013 — Implicit stream order is caller-order semantics
+
+- **Status:** Design resolved; migration tests pending.
+- **Root cause:** `scheduler._validated_dependencies()` adds each stream predecessor while iterating the caller-provided Event sequence, and `test_same_stream_events_keep_input_order_without_explicit_dependencies` locks that behavior.
+- **Impact:** A certified dependency-DAG bound cannot claim input-permutation invariance while silently deriving different DAG edges from permutation.
+- **Resolution:** Remove `stream_ordered` and iterable-derived stream edges from the new EventGraph path. Workload composition emits explicit prior-completion-to-next-launch dependencies. The old compatibility test becomes a RED migration test for caller-order invariance rather than an adapter requirement.
+
+### FSV-014 — Exactness needs a complete optimality certificate
+
+- **Status:** Design resolved; implementation/search-completion evidence pending.
+- **Root cause:** “Exact” is not established by a best-known feasible schedule. Exhaustive search completion or an optimization solver's proven zero gap is required.
+- **Impact:** Timeout/search exhaustion could otherwise be mislabeled exact.
+- **Resolution:** Exhaustively enumerate all precedence-feasible permutations and apply serial SGS within the declared fixed-duration anonymous-resource domain. Return an ExactScheduleResult only after complete enumeration; budget exhaustion raises and returns no result. Cross-check tiny integer cases with independent bounded start-time enumeration.
+
+### FSV-015 — Proposed external solver dependency is unapproved
+
+- **Status:** Resolved for the first exact oracle; no dependency change made.
+- **Root cause:** Preliminary Claude review recommended OR-Tools CP-SAT, but the project forbids new dependencies without explicit approval. OR-Tools is unavailable. SciPy `1.17.1` and its HiGHS-backed `milp` interface are available only as ambient host packages; the repository declares no dependency environment and has no existing solver imports.
+- **Evidence:** A two-integer SciPy MILP completed with `status=0`, objective `2.0`, solution `[0.0, 2.0]`, and `mip_gap=0.0`; this validates the installed API only, not a scheduling formulation.
+- **Impact:** The exact-oracle implementation plan cannot assume OR-Tools or silently depend on ambient SciPy. A solver's optimal status cannot prove that an incorrect formulation matches the Event model.
+- **Resolution:** The first exact oracle uses only the Python standard library. SciPy/HiGHS and OR-Tools are not selected, imported, or declared. Any future solver remains a separately approved extension with formulation proof and tiny-case cross-checking.
+
+### FSV-016 — Current report conflates dependency and schedule evidence
+
+- **Status:** Design resolved; implementation pending.
+- **Root cause:** `build_report()` sets `critical_path` equal to `SimulationResult.makespan`, even though the makespan includes resource-policy serialization beyond the dependency longest path. Its `resource_busy_time` also sums one duration per single-resource Event and has no demand weighting.
+- **Impact:** The current report name can overstate a feasible schedule as a proof term, and the busy-time metric will become dimensionally incorrect once simultaneous demands are supported.
+- **Resolution:** Report dependency critical path from SafeBound/graph evidence, exact optimum from `ExactScheduleResult`, feasible makespan/timeline from `SimulationResult`, and measured comparisons separately. Global and per-SM resource attribution is `duration * demand`; lifetime reservation evidence is separate and is not silently added to the first SafeBound.
+
+### FSV-017 — Exact-engine review contains a corrected example but an unverified theorem adaptation
+
+- **Status:** Design resolved; code-level proof obligations pending.
+- **Root cause:** The first Claude exact-engine review computed a hand example as `7` although the resource-complete makespan is `8`. The correction pass fixed the example and recommended exhaustive serial SGS, but changed its characterization from generating every active schedule to generating only a dominant set without supplying verifiable theorem text. Its proposed induction also requires careful project-specific handling of float time, simultaneous demands, ties, and zero-duration nodes.
+- **Impact:** The high-level engine recommendation is plausible, but its review text cannot itself serve as the Search-Coverage Gate proof.
+- **Resolution:** The continuation directive authorizes completion with the reviewed dependency-free engine. `design.md` now gives the self-contained active-schedule/serial-SGS proof for float duration, simultaneous demand, ties, and half-open zero-duration intervals. GREEN still requires independent bounded time-indexed enumeration over tiny integer cases.
+
+### FSV-018 — `tensor_all_ops` is analytical feature data, not measured counter evidence
+
+- **Status:** Open evidence gap; prior interpretation corrected.
+- **Root cause:** The CSV column name resembles a profiler quantity, but repository source computes the same field from padded shapes and CTA ratios for legacy MLP features. No collection script, counter identifier, raw profiler output, or environment metadata ties it to hardware counters.
+- **Evidence:** The complete non-split Hopper `gemm_9_calculator.py` formula matches `tensor_all_ops` within `rtol=1e-12`, `atol=1e-6` for `40,632/40,632` rows. The calculator itself infers split/replication from CTA ratios.
+- **Impact:** The column cannot validate physical issued work, partial-tile hardware behavior, or measured primitive calibration. Treating it as a counter would make R8/R11 circular.
+- **Resolution required:** Keep logical work, explicit-policy issued work, legacy analytical feature work, and separately collected measured-counter work distinct. R8 implementation uses explicit policy metadata; R11 requires an authoritative counter/microbenchmark campaign or remains blocked.
+
+### FSV-019 — Dependency acyclicity alone does not prevent lifetime resource deadlock
+
+- **Status:** Design corrected; implementation proof/test pending.
+- **Root cause:** The shared-kernel Claude review claimed an acyclic EventGraph makes lifetime deadlock impossible. Resource wait cycles need not be dependency cycles: two lifetimes can reserve different per-SM resources while their members wait for each other's held resource.
+- **Impact:** A direct implementation of the review text could stall even though the dependency graph is valid.
+- **Resolution required:** Separate lifetime-held occupancy resources from transient execution resources. Member use of a held resource must fit inside its own reservation; transient demands are admitted atomically only at Event start and released at completion. Add a RED two-lifetime hold-and-wait counterexample and prove the accepted contract excludes it.
+
+### FSV-020 — Ready-queue bookkeeping does not prove total scheduler complexity
+
+- **Status:** Design corrected; measurement pending.
+- **Root cause:** The shared-kernel review derived `O((V+E) log V)` while separately acknowledging eligible-SM scans. It also omitted repeated checks of blocked ready Events under simultaneous multi-resource demand and lifetime reservations.
+- **Impact:** The scheduler rewrite could repeat the current mistake of presenting a partial complexity analysis as an end-to-end performance result.
+- **Resolution required:** Separate graph/heap operations from placement/admission cost, instrument scans/checks, and report wall-clock runtime on declared graph sizes including the historical `58,467`-Event case. Claim only the complexity justified by the implemented data structures.
+
+### FSV-021 — Static cache order is a modeled input, not a hardware-universal trace
+
+- **Status:** Design resolved for the initial model; measured equivalence remains open.
+- **Root cause:** Concurrent workers do not imply one physical access order. Any pre-scheduling cache trace selects an abstract order and can produce more or fewer misses than another interleaving.
+- **Impact:** The resulting fixed durations can support an exact optimum and SafeBound only for the declared manifest-order model, not a universal lower bound over arbitrary real-hardware cache arbitration.
+- **Resolution:** Use one canonical manifest-order CacheAccess trace for every modeled provenance layer and label the theorem accordingly. Do not add the Claude-proposed isolated-worker cache path: overcounting misses can increase a resource-work term and is not a safe lower-bound relaxation. Hardware claims require separate matched evidence.
