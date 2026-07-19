@@ -8,6 +8,16 @@ from .resources import ResourceConfig
 
 
 @dataclass(frozen=True)
+class ScheduleEntry:
+    """Immutable time and optional placement witness for one Event."""
+
+    event_id: str
+    start_time: float
+    end_time: float
+    sm_id: int | None = None
+
+
+@dataclass(frozen=True)
 class SimulationResult:
     events: tuple[Event, ...]
     makespan: float

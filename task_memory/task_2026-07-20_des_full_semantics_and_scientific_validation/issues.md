@@ -4,6 +4,10 @@
 
 | Date | Summary of Changes |
 |---|---|
+| 2026-07-20 | Resolved the resource-free SafeBound `max` call defect found during the first GREEN attempt. |
+| 2026-07-20 | Resolved the Wave-2 review/test arithmetic defects and preserved the sound per-SM exact-domain boundary. |
+| 2026-07-20 | Resolved the Wave-1 line-length audit scope defect without reformatting unrelated legacy imports or weakening the diff gate. |
+| 2026-07-20 | Reopened the lifetime-progress implementation audit for an external-event wait-for case raised by the Wave-1 read-only reviewer. |
 | 2026-07-20 | Resolved the comparator approval issue and froze modeled-universal, held-out, and calibration evidence boundaries. |
 | 2026-07-20 | Narrowed the missing comparator to a source-backed Accel-Sim A100 candidate and recorded its explicit approval/build prerequisites. |
 | 2026-07-20 | Selected exhaustive serial SGS for the small exact oracle and added its self-contained coverage proof and independent time-grid audit. |
@@ -153,10 +157,10 @@
 
 ### FSV-019 — Dependency acyclicity alone does not prevent lifetime resource deadlock
 
-- **Status:** Design corrected; implementation proof/test pending.
+- **Status:** Cross-lifetime member demand implemented; broader external-event placement/no-progress case assigned to Wave 3.
 - **Root cause:** The shared-kernel Claude review claimed an acyclic EventGraph makes lifetime deadlock impossible. Resource wait cycles need not be dependency cycles: two lifetimes can reserve different per-SM resources while their members wait for each other's held resource.
 - **Impact:** A direct implementation of the review text could stall even though the dependency graph is valid.
-- **Resolution required:** Separate lifetime-held occupancy resources from transient execution resources. Member use of a held resource must fit inside its own reservation; transient demands are admitted atomically only at Event start and released at completion. Add a RED two-lifetime hold-and-wait counterexample and prove the accepted contract excludes it.
+- **Resolution required:** Separate lifetime-held occupancy resources from transient execution resources. Member use of a held resource must fit inside its own reservation; transient demands are admitted atomically only at Event start and released at completion. The Wave-1 RED two-lifetime member-demand counterexample is GREEN. StepCode Claude confirmed that blanket static rejection of a release dependency on an external same-resource Event would be unnecessarily conservative because another SM may be feasible. Wave 3 must test successful alternate-SM placement and explicit no-progress failure when no placement exists; a silent stall, partial schedule, or fallback remains prohibited.
 
 ### FSV-020 — Ready-queue bookkeeping does not prove total scheduler complexity
 
@@ -171,3 +175,31 @@
 - **Root cause:** Concurrent workers do not imply one physical access order. Any pre-scheduling cache trace selects an abstract order and can produce more or fewer misses than another interleaving.
 - **Impact:** The resulting fixed durations can support an exact optimum and SafeBound only for the declared manifest-order model, not a universal lower bound over arbitrary real-hardware cache arbitration.
 - **Resolution:** Use one canonical manifest-order CacheAccess trace for every modeled provenance layer and label the theorem accordingly. Do not add the Claude-proposed isolated-worker cache path: overcounting misses can increase a resource-work term and is not a safe lower-bound relaxation. Hardware claims require separate matched evidence.
+
+### FSV-022 — Whole-file line-length auditing misclassified pre-existing lines
+
+- **Status:** Resolved on 2026-07-20.
+- **Root cause:** A fresh helper scanned every line in files touched by Wave 1, while the recorded acceptance metric concerns newly added Python lines. Two long import lines in `event_simulator/__init__.py` already existed at `HEAD` and were therefore incorrectly attributed to this wave.
+- **Impact:** The combined verification wrapper exited `1` even though `76/76` tests and `git diff --check` passed; treating that result as a production failure would trigger unrelated formatting work.
+- **Resolution:** Compare only added Python lines from `git diff --unified=0`. The corrected audit reports `0` newly added lines over 88 characters. No code was reformatted, no exception was added, and the failed helper plus resolution are preserved in the Wave-1 test report.
+
+### FSV-023 — Per-SM proof-boundary review contained an incorrect SafeBound value
+
+- **Status:** Resolved on 2026-07-20; the corrected review remains WATCH evidence.
+- **Root cause:** The first independent review confused one Event's `2/3` share of a single SM's register capacity with the aggregate resource-time bound over three Events and two SMs.
+- **Impact:** The stated test expectation `2/3` contradicted the accepted formula and could have driven a false production correction even though the Option-B placement counterexample itself was sound.
+- **Resolution:** A bounded StepCode Claude correction verified `sum(duration * demand) / (sm_count * capacity) = 6 / 6 = 1.0`, aggregate-pool optimum `1.0`, and true placed optimum `2.0`. The exact oracle still rejects multi-SM nonzero per-SM demand, while SafeBound retains the `1.0` aggregate relaxation. No scaling factor, fallback, or additional topology model was introduced.
+
+### FSV-024 — Initial Wave-2 tests contained one collection warning and two incorrect expectations
+
+- **Status:** Resolved on 2026-07-20 before production implementation.
+- **Root cause:** A lazy `itertools.product` object was passed directly to `pytest.mark.parametrize`; one permutation optimum omitted the long Event's resource serialization (`5.0` instead of `6.0`); one critical-path expectation ignored an independent duration-`10` Event (`8.0` instead of `10.0`).
+- **Impact:** The warning would violate the clean TDD gate, and the two arithmetic errors would falsely reject correct production behavior.
+- **Resolution:** Materialized the parameter cases, corrected the exact optimum to `6.0`, and corrected the graph critical path to `10.0`. The fresh focused run has `76` ordinary failures, `0` collection errors, and `0` warnings, all attributable to the intentionally missing Wave-2 APIs.
+
+### FSV-025 — SafeBound failed when the resource-term collections were empty
+
+- **Status:** Resolved on 2026-07-20.
+- **Root cause:** `max(critical_path, *global_terms, *per_sm_terms)` becomes the one-argument call `max(critical_path)` when both mappings are empty. Python interprets a one-argument `max` call as an iterable form, so the float critical-path value raised `TypeError`.
+- **Impact:** The first SafeBound GREEN attempt reported `4 failed, 48 passed`; every failing case used a valid resource-free configuration. Resource-bearing cases already passed.
+- **Resolution:** Construct one tuple containing the critical path and all resource terms, then call `max` on that tuple. This directly models the mathematical set of proven terms, covers the empty-resource boundary without a special-case branch, and preserves fail-fast semantics. The rerun passed `52/52`; the combined Wave-2 suite passed `76/76`.

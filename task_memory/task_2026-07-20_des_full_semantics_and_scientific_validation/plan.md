@@ -4,6 +4,11 @@
 
 | Date | Summary of Changes |
 |---|---|
+| 2026-07-20 | Closed the fresh Wave-2 handoff gate and advanced execution to Wave-3 scheduler/report TDD. |
+| 2026-07-20 | Passed the Wave-2 Claude proof-layer gate with APPROVE; only fresh handoff verification remains before Wave 3. |
+| 2026-07-20 | Completed Wave-2 implementation and exhaustive evidence; the independent proof-layer Claude gate is now the only remaining Wave-2 exit action. |
+| 2026-07-20 | Closed the bounded Wave-1 Claude correction gate with APPROVE and advanced execution to the Wave-2 proof layer. |
+| 2026-07-20 | Reconciled the Wave-1 Claude APPROVE gate by keeping the shared-kernel gate focused and assigning deliberate downstream API migration to its existing Wave 2–4 RED owners. |
 | 2026-07-20 | Completed the executable GSD blueprint with frozen Wave-0 decisions, exact file ownership, entry/exit invariants, TDD commands, and Phase-1 checkpoint gate. |
 | 2026-07-20 | Identified the Accel-Sim/GPGPU-Sim A100 benchmark candidate and made dependency approval a Wave-0 gate. |
 | 2026-07-20 | Selected the standard-library exhaustive serial SGS exact oracle and marked its proof/test obligations for Wave 2. |
@@ -17,8 +22,8 @@
 ## Status
 
 - Overall: In progress.
-- Current phase: Phase 1 — approved/validated checkpoint delivery.
-- Production code: Frozen.
+- Current phase: Phase 2 Wave 3 — feasible scheduler and report TDD.
+- Production code: Waves 1–2 are complete and independently approved; Wave 3 is active.
 
 ## Phase 1 — Plan, Discuss, and Design
 
@@ -91,19 +96,17 @@ No default event-count or wall-clock limit becomes an acceptance contract before
 
 1. RED `tests/unit/test_event_graph.py` for canonical order, permutations, duplicate/unknown/self dependency, cycles, explicit stream semantics, lifetime endpoints/membership, and immutability.
 2. RED `tests/unit/test_resource_semantics.py` for global/per-SM capacities, simultaneous vectors, reservation limits, eligible SMs, impossible reservations, and the two-lifetime hold-and-wait counterexample.
-3. GREEN only in `events.py` and `resources.py`; migrate all source/tests to the single EventGraph/ResourceConfig contract and remove scheduled times, `stream_ordered`, and single `resource` from Event.
-4. REFACTOR only after focused and existing integration tests pass.
+3. GREEN only in `events.py` and `resources.py`, plus public package exports; remove scheduled times, `stream_ordered`, and single `resource` from Event without adding an adapter.
+4. REFACTOR only after the focused shared-kernel tests pass. Downstream algorithms and their tests migrate under their existing Wave 2–4 RED owners so the API break is never hidden by compatibility code.
 
 Focused command:
 
 ```bash
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD" python -m pytest -p no:cacheprovider \
-  tests/unit/test_event_graph.py tests/unit/test_resource_semantics.py \
-  tests/unit/test_event_scheduler.py tests/unit/test_hardware_adapter.py \
-  tests/integration/test_operator_simulation.py tests/integration/test_fa_simulation.py -q
+  tests/unit/test_event_graph.py tests/unit/test_resource_semantics.py -q
 ```
 
-**Exit invariant:** every downstream algorithm can accept exactly one validated EventGraph and ResourceConfig; no duplicate graph validator, implicit stream edge, scheduled Event mutation, partial demand acquisition, or cross-lifetime hold-and-wait state remains. Run an independent Claude shared-kernel code review before Wave 2/3.
+**Exit invariant:** the one validated EventGraph and ResourceConfig contract is public, immutable, canonical, and independently reviewed; no compatibility adapter, duplicate graph validator, implicit stream edge, scheduled Event state, or accepted cross-lifetime member demand remains. Old downstream callers may remain intentionally broken only until their declared Wave 2–4 RED migration; they cannot receive a shim. Run an independent Claude shared-kernel code review before Wave 2/3.
 
 ### Wave 2 — Proof layer
 
@@ -129,7 +132,7 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$PWD" python -m pytest -p no:cacheprovider
 
 **Entry invariant:** Wave 1 semantic kernel is accepted; Wave 2 exact oracle is available for tiny comparisons.
 
-1. RED scheduler tests for priority/tie order, dependency feasibility, atomic multi-resource placement, per-SM co-location, affinity, lifetime acquisition/release, blocked-ready rechecks, zero duration, impossible state, and caller-order invariance.
+1. RED scheduler tests for priority/tie order, dependency feasibility, atomic multi-resource placement, per-SM co-location, affinity, lifetime acquisition/release, blocked-ready rechecks, zero duration, impossible state, and caller-order invariance. Include the reviewed case where a lifetime release depends on an external Event demanding the same reserved occupancy resource: progress on another eligible SM must succeed, while no feasible placement must raise an explicit no-progress error rather than stall.
 2. GREEN ready-queue/event-completion scheduler with immutable ScheduleEntry and explicit admission counters.
 3. RED/ GREEN report tests separating dependency critical path, exact optimum, SafeBound, feasible makespan, and demand-weighted resource-time.
 4. Run `tests/performance/benchmark_event_scheduler.py` on versioned graph sizes including the historical `58,467`-Event case; record events, edges, heap operations, ready scans, placement checks, lifetime checks, wall time, expected old `115.882818766s`, actual new runtime, and delta.
