@@ -4,6 +4,7 @@
 
 | Date | Summary of Changes |
 |---|---|
+| 2026-07-20 | Recorded the pushed Wave-4 implementation commit and remote-equality proof, then advanced the remaining scope to Wave 5. |
 | 2026-07-20 | Recorded the exact-path staging and index-checksum audit while retaining commit/push equality as pending. |
 | 2026-07-20 | Added the final Wave-4 Claude delivery-package approval and fresh pre-staging regression/static/checksum evidence. |
 | 2026-07-20 | Added the completed and independently approved Wave-4 implementation, numeric validation matrix, hashes, and remaining Wave-5 scope. |
@@ -16,7 +17,7 @@
 
 This umbrella task remains active. Phase 1 and Phase-2 Waves 1--4 are complete at the modeled implementation level and independently approved. They now implement and validate the normalized Event/resource kernel, finite exact schedule oracle, scalable order-invariant SafeBound, deterministic feasible scheduler, provenance-separated reporting, scheduler scaling benchmark, manifest-order HBM/L2 cache state, authoritative `GemmLaunchManifest`, persistent Worker lifetimes, split-K/reduction, logical versus physical-issued work, explicit FA affinity, two-level hardware topology, and row-indexed authoritative validation.
 
-Wave 4 has passed its focused `147/147` suite, full `400/400` repository regression, exhaustive proof regression, numeric contract audit, and StepCode Claude `APPROVE` gate. Its Lore commit/push and remote-SHA equality check are the current checkpoint. Wave 5 still owns the approved GPGPU-Sim cycle-level PTX-mode comparison, authoritative dataset manifest provisioning, measured primitive calibration, held-out hardware studies, final modeled theorem audit, and separate finite measured-hardware audit. This interim archive does not claim that the full umbrella task is complete.
+Wave 4 passed its focused `147/147` suite, full `400/400` repository regression, exhaustive proof regression, numeric contract audit, and both StepCode Claude `APPROVE` gates. Lore commit `350159313aa3a018700e648bce7ca5e842a34e07` was pushed, fetched, and matched by local `HEAD` and `origin/des`; the relevant worktree was clean at the Wave-5 handoff. Wave 5 still owns the approved GPGPU-Sim cycle-level PTX-mode comparison, authoritative dataset manifest provisioning, measured primitive calibration, held-out hardware studies, final modeled theorem audit, and separate finite measured-hardware audit. This interim archive does not claim that the full umbrella task is complete.
 
 ## Deliverables Inventory
 
@@ -66,7 +67,7 @@ Wave 4 has passed its focused `147/147` suite, full `400/400` repository regress
 | `task_memory/task_2026-07-20_des_full_semantics_and_scientific_validation/wave3_scheduler_benchmark.csv` | `13dad9670800d8362c5c16f182b48255bf26e0c86cf0986b1156fe08e6a125f5` |
 | `task_memory/task_2026-07-20_des_full_semantics_and_scientific_validation/test_report_2026-07-20_wave2_proof_layer.md` | `6068de28ad81e0b237d4cfa05010da18af82ee350a57012c64b214cf89c8c33e` |
 | `task_memory/task_2026-07-20_des_full_semantics_and_scientific_validation/test_report_2026-07-20_wave3_scheduler_report.md` | `7dd3c4ca9a0f9f0f1595551f7f338233f671fc9b56df2a3668d61305be317e8e` |
-| `task_memory/task_2026-07-20_des_full_semantics_and_scientific_validation/test_report_2026-07-20_wave4_operator_lowering.md` | `e5ddc3652a01e1e0473fdb8c3acec9b9e259b42d781c0163d2dea9e2c225595a` |
+| `task_memory/task_2026-07-20_des_full_semantics_and_scientific_validation/test_report_2026-07-20_wave4_operator_lowering.md` | `b0c2398a60713d3a182026c21c302a468630611717eaa2dc483c3a285838e9ac` |
 
 The complete Wave-4 delivery set, including all current task documents, is enumerated in `task_memory/task_2026-07-20_des_full_semantics_and_scientific_validation/checksums.sha256`. The manifest intentionally does not hash itself. `.omx/` advisor artifacts are review evidence but are not staged as repository deliverables.
 
@@ -96,7 +97,7 @@ The complete Wave-4 delivery set, including all current task documents, is enume
 | Wave-4 independent completion reviews | No `BLOCK` | Post-implementation and final-package `APPROVE`; final staging verdict `READY`; `0` mandatory fixes | `0` blockers | PASS |
 | Wave-4 static pre-staging audit | Parse/style/legacy/signature/history/hash/diff clean | `14/14` AST parsed; `0` added Python lines over 88; `0` unused imports; `0` legacy hits; signature `1`; histories `19/19`; checksums `54/54`; `0` diff errors | `0` failures | PASS |
 | Wave-4 exact-path staging audit | Exact paths, hashes, no forbidden/runtime paths | `25/25` paths; `54/54` index hashes; `0` ignored/OMX/unstaged/untracked/diff findings | `0` failures | PASS |
-| Wave-4 commit/push and remote equality | Lore commit pushed; local equals remote | Not yet run at this checkpoint | Pending | PENDING |
+| Wave-4 commit/push and remote equality | Lore commit pushed; local equals remote | commit `350159313aa3a018700e648bce7ca5e842a34e07`; local and `origin/des` equal; clean handoff | equality `1` | PASS |
 | Wave-5 external/scientific campaigns | All declared E0--E7 gates pass | Not started at this checkpoint | Pending | PENDING |
 
 The `legacy/new` scheduler benchmark ratio is a size-matched historical ratio only. The first five historical values are legacy scheduler-time medians, while the new denominator is graph construction/validation plus scheduling plus report assembly. It is not a stage-matched speedup, a controlled machine comparison, a cycle-level result, or evidence for a `10000x` claim.
@@ -105,11 +106,10 @@ The `legacy/new` scheduler benchmark ratio is a size-matched historical ratio on
 
 ### Remaining in the current task
 
-1. Deliver the Wave-4 checkpoint with an exact-path staging audit, Lore commit, push of `des`, and proof that `HEAD == origin/des`.
-2. Provision and run the approved pinned Accel-Sim/GPGPU-Sim plus pinned CUDA/`nvcc` A100 synthetic PTX-mode comparison. Do not substitute `nsys` or claim Hopper/silicon equivalence.
-3. Provision authoritative row-indexed dataset manifests, freeze predictions before target latency joins, and run the four within-Hopper held-out folds; run cross-architecture folds only where manifest support is nonzero.
-4. Run the measured primitive calibration campaign, universal modeled theorem audit, and separate finite measured-hardware audit, retaining every unsupported row and violation.
-5. Complete final README/design/evidence updates, full regression, independent design/code/science review, final hashes, Lore commit, push, and remote equality verification.
+1. Provision and run the approved pinned Accel-Sim/GPGPU-Sim plus pinned CUDA/`nvcc` A100 synthetic PTX-mode comparison. Do not substitute `nsys` or claim Hopper/silicon equivalence.
+2. Provision authoritative row-indexed dataset manifests, freeze predictions before target latency joins, and run the four within-Hopper held-out folds; run cross-architecture folds only where manifest support is nonzero.
+3. Run the measured primitive calibration campaign, universal modeled theorem audit, and separate finite measured-hardware audit, retaining every unsupported row and violation.
+4. Complete final README/design/evidence updates, full regression, independent design/code/science review, final hashes, Lore commit, push, and remote equality verification.
 
 ### Current WATCH items
 

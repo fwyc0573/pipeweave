@@ -4,6 +4,7 @@
 
 | Date | Summary of Changes |
 |---|---|
+| 2026-07-20 | Recorded the pushed Wave-4 Lore commit and exact local/remote SHA equality. |
 | 2026-07-20 | Recorded the exact-path staging and index-hash audit before the Wave-4 Lore commit. |
 | 2026-07-20 | Added the final Claude delivery-package verdict, fresh pre-staging regression/proof/static results, checksum totals, and resolved static-wrapper false positive. |
 | 2026-07-20 | Recorded Wave-4 RED/GREEN evidence, independent review reconciliation, full regression, proof validation, static delivery checks, and absolute numeric contract metrics. |
@@ -486,6 +487,9 @@ Wave-4 implementation and regression evidence are **PASS** at this checkpoint:
 - independent post-implementation and final-package verdicts: `APPROVE`, zero
   mandatory fixes.
 
-Branch delivery still requires the final re-stage audit after recording this
-evidence, Lore commit, push, fetch, and `HEAD == origin/des` proof. Wave 5 must
-not start before those steps pass.
+The final re-stage audit reproduced `25/25` exact paths, `54/54` index hashes,
+`38/38` summary hashes, zero ignored/OMX/unstaged/untracked findings, and clean
+staged/unstaged diffs. Lore commit
+`350159313aa3a018700e648bce7ca5e842a34e07` was pushed to `origin/des`; a fresh
+fetch returned the same local and remote SHA, so remote equality was `1` and
+the relevant worktree was clean. Wave 5 may now begin from that checkpoint.

@@ -4,6 +4,7 @@
 
 | Date | Summary of Changes |
 |---|---|
+| 2026-07-20 | Committed and pushed the Wave-4 checkpoint at `350159313aa3a018700e648bce7ca5e842a34e07`, verified remote equality, and opened Wave 5. |
 | 2026-07-20 | Passed the first 25-path explicit staging and 54-entry index-hash audit with no ignored, OMX, unstaged, untracked, or diff findings. |
 | 2026-07-20 | Passed the fresh 147/400/4,725 pre-staging regressions and the corrected final static gate; documented the checker-only `__future__` false positive. |
 | 2026-07-20 | Rebuilt and verified the 54-entry Wave-4 checksum inventory and passed the final independent Claude delivery-package APPROVE/READY gate without production changes. |
@@ -452,3 +453,10 @@
 - **Expectation:** Stage the explicit `25`-path list without `git add .`; match expected and actual paths exactly; match all `54` checksum inputs against index blobs; and leave no relevant tracked or untracked delta outside the index.
 - **Method:** Ran one explicit `git add -- <25 exact paths>` command, compared the expected path set against `git diff --cached --name-only`, hashed every manifest path from `git show :<path>`, checked excluded/runtime prefixes, counted relevant unstaged and untracked paths, and ran staged `git diff --check`.
 - **Result:** Expected and actual staged paths were `25/25`, path mismatches `0`, ignored-path entries `0`, `.omx/` entries `0`, index checksum failures `0/54`, relevant unstaged tracked paths `0`, relevant untracked paths `0`, and staged diff errors `0`. This documentation update now requires a bounded checksum rebuild and re-stage before the final index audit.
+
+### 2026-07-20 — Wave-4 Lore commit, push, and remote equality
+
+- **Motivation:** Close the mandatory branch-delivery gate before any Wave-5 environment provisioning or scientific campaign.
+- **Expectation:** Preserve the reviewed 25-path index, create one Lore-compliant checkpoint, push without force, fetch the remote ref, prove exact SHA equality, and leave the relevant worktree clean.
+- **Method:** Rebuilt the post-audit checksum manifest, explicitly re-staged only the five changed delivery documents, repeated the full index audit, committed with the intent `Model authoritative GPU execution semantics before scientific evaluation`, pushed `des`, fetched `origin/des`, compared both full SHAs, and ran the safe status command excluding `=10.1`.
+- **Result:** The final index retained `25/25` exact paths, `54/54` index hashes, `38/38` summary hashes, zero path mismatches, zero ignored/OMX paths, zero relevant unstaged/untracked paths, and clean staged/unstaged diff checks. Commit `350159313aa3a018700e648bce7ca5e842a34e07` was pushed successfully; local `HEAD` and `origin/des` both equal that SHA; remote equality is `1`; and the relevant status was clean. Wave 5 is active.

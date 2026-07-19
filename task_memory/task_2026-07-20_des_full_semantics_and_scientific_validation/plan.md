@@ -4,6 +4,7 @@
 
 | Date | Summary of Changes |
 |---|---|
+| 2026-07-20 | Delivered Wave 4 at `350159313aa3a018700e648bce7ca5e842a34e07`, verified remote equality, and activated Wave 5. |
 | 2026-07-20 | Passed the first exact-path/index-hash staging audit and advanced to final re-stage plus Lore delivery. |
 | 2026-07-20 | Passed the fresh focused/full/proof/static pre-staging gate and advanced Wave 4 to exact-path staging. |
 | 2026-07-20 | Passed the final Wave-4 delivery-package Claude gate with APPROVE/READY and advanced to fresh verification plus exact-path staging. |
@@ -31,8 +32,8 @@
 ## Status
 
 - Overall: In progress.
-- Current phase: Phase 2 Wave 4 — final index audit, Lore commit, push, and remote-equality verification.
-- Production code: Waves 1–3 are committed and pushed; all Wave-4 cache, manifest, operator, hardware, FA, and validator changes are implemented and independently approved. No Wave-5 work begins until the Wave-4 regression, artifact, commit, push, and remote-equality gates pass.
+- Current phase: Phase 2 Wave 5 — evaluation infrastructure and scientific studies.
+- Production code: Waves 1–4 are committed and pushed through `350159313aa3a018700e648bce7ca5e842a34e07`; local and remote equality was verified before Wave-5 entry.
 
 ## Phase 1 — Plan, Discuss, and Design
 
