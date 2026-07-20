@@ -4,6 +4,7 @@
 
 | Date | Summary of Changes |
 |---|---|
+| 2026-07-20 | Corrected Accel-Sim/GPGPU-Sim provenance to separately pinned commits and recorded the Wave-5 image and authoritative-manifest blockers. |
 | 2026-07-20 | Froze the independently approved Wave-4 manifest-only lowering, resource-specific cache-traffic, worker-lifetime, reduction, FA-affinity, hardware-topology, and validator contracts. |
 | 2026-07-20 | Advanced the approved implementation design to Wave 4 after the verified Wave-3 commit/push checkpoint. |
 | 2026-07-20 | Corrected lifetime-covered transient-demand ownership and documented the greedy scheduler's explicit no-progress policy boundary. |
@@ -23,7 +24,7 @@
 
 ## Status
 
-This is the **independently approved and checkpointed implementation design**. Phase 1 and reviewed Waves 1–3 are committed and pushed at `0a733ec597056924f9c10236071eb6892550080d`; Phase 2 Wave 4 is active. The four-layer provenance split, shared execution kernel, exact engine, cache/manifest semantics, calibration/held-out/theorem boundaries, and Accel-Sim/GPGPU-Sim dependency are resolved. StepCode Claude returned `APPROVE` at the complete design gate and every completed implementation/review gate, including the bounded post-Wave-3 CSV correction gate.
+This is the **independently approved and checkpointed implementation design**. Phase 1 and reviewed Waves 1–4 are committed and pushed through `350159313aa3a018700e648bce7ca5e842a34e07`; Phase 2 Wave 5 is active but blocked at its external-image and authoritative-manifest gates. The four-layer provenance split, shared execution kernel, exact engine, cache/manifest semantics, calibration/held-out/theorem boundaries, and approved Accel-Sim/GPGPU-Sim dependency are resolved. External comparator execution, measured primitive calibration, and held-out GEMM scoring remain unproven until their declared environment and manifest inputs exist.
 
 ## Design Objective
 
@@ -543,7 +544,7 @@ This theorem is universal only over the exact model quantified above and the one
 
 The source-backed candidate is Accel-Sim Framework plus its GPGPU-Sim detailed performance model. Official upstream evidence at framework commit `3016c658f810bdae9a14bf4534ee99e9945eedae` states that the trace-driven front end consumes SASS traces and feeds GPGPU-Sim 4.x, and also documents a PTX-mode run path. Its standard configuration file includes `A100` backed by `configs/tested-cfgs/SM80_A100/gpgpusim.config`; that configuration declares compute capability `8.0`, `108` clusters, tensor-core units, L1/L2, interconnect, and DRAM timing. No standard H100/Hopper configuration was found. Upstream is BSD-2-Clause.
 
-The user approved the dependency and pinned CUDA/`nvcc` environment. The initial matched benchmark domain is therefore a small deterministic **A100** synthetic GEMM whose source, PTX mode, launch dimensions, tile/K policy, datatype, output boundary, cache state, Accel-Sim commit/submodule revision, A100 configuration, and host timing command are versioned together. The same manifest is lowered into DES. The report records:
+The user approved the dependency and pinned CUDA/`nvcc` environment. The initial matched benchmark domain is therefore a small deterministic **A100** synthetic GEMM whose source, PTX mode, launch dimensions, tile/K policy, datatype, output boundary, cache state, Accel-Sim framework commit, independently pinned GPGPU-Sim distribution commit, A100 configuration, and host timing command are versioned together. The same manifest is lowered into DES. The report records:
 
 - DES and comparator modeled operations/bytes/CTA count;
 - comparator simulated cycles and converted time using the pinned clock;
@@ -555,7 +556,9 @@ The user approved the dependency and pinned CUDA/`nvcc` environment. The initial
 
 This benchmark supports only the named A100 synthetic workload and runtime ratio. It does not validate Hopper, measured hardware, cache-policy equivalence, or the broad `10000x` claim unless the measured ratio actually reaches that value. Pre-traced assets are not assumed: the upstream trace-summary URL currently redirects to a missing page, and the local host has no comparator binary, trace, config checkout, `nvcc`, or approved build environment.
 
-Accel-Sim/GPGPU-Sim is an approved new external dependency. It is provisioned only in Phase 2 after the Phase-1 checkpoint is committed and pushed. `nsys` remains an unacceptable substitute.
+Framework commit `3016c658f810bdae9a14bf4534ee99e9945eedae` contains no `.gitmodules` file and pins no GPGPU-Sim submodule. Its setup script instead defaults to cloning the moving GPGPU-Sim `dev` branch. Reproducibility therefore requires a separate immutable GPGPU-Sim commit in the toolchain lock; the framework commit alone is insufficient.
+
+Accel-Sim/GPGPU-Sim is an approved new external dependency. It is provisioned only in Phase 2 after the Phase-1 checkpoint is committed and pushed. The first handbook-compliant `rlaunch --predict-only --image` check for the official GHCR image failed during registry token resolution with `DENIED: denied`; no container digest or `nvcc` environment has been established. `nsys` remains an unacceptable substitute.
 
 Focused StepCode Claude review artifact `.omx/artifacts/claude-you-are-the-independent-stepcode-claude-reviewer-for-one-irr-2026-07-19T18-57-46-477Z.md` returned `APPROVE` with WATCH. It supports the synthetic A100 manifest and recommends the precise label **GPGPU-Sim cycle-level PTX-mode comparison**, not strict cycle-accurate A100 hardware equivalence. The primary reconciliation accepts that naming and scope but rejects the review's statement that missing `nvcc` is irrelevant: the official GPGPU-Sim README requires a CUDA Toolkit, CUDA headers/math support, and an `nvcc`-compiled dynamically linked CUDA application for the documented PTX path. The dependency approval therefore covers a pinned CUDA/compiler/build environment as well as simulator source.
 

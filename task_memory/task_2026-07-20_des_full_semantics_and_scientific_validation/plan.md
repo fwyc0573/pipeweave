@@ -4,6 +4,7 @@
 
 | Date | Summary of Changes |
 |---|---|
+| 2026-07-20 | Recorded the Wave-5 entry WATCH review and the blocking GHCR-image and authoritative-manifest conditions before evaluation implementation. |
 | 2026-07-20 | Delivered Wave 4 at `350159313aa3a018700e648bce7ca5e842a34e07`, verified remote equality, and activated Wave 5. |
 | 2026-07-20 | Passed the first exact-path/index-hash staging audit and advanced to final re-stage plus Lore delivery. |
 | 2026-07-20 | Passed the fresh focused/full/proof/static pre-staging gate and advanced Wave 4 to exact-path staging. |
@@ -31,9 +32,10 @@
 
 ## Status
 
-- Overall: In progress.
-- Current phase: Phase 2 Wave 5 — evaluation infrastructure and scientific studies.
+- Overall: Blocked pending user guidance or authoritative external inputs.
+- Current phase: Phase 2 Wave 5 — stopped at the external-image and authoritative-manifest entry gates.
 - Production code: Waves 1–4 are committed and pushed through `350159313aa3a018700e648bce7ca5e842a34e07`; local and remote equality was verified before Wave-5 entry.
+- Blocked branches: E4 and E6 lack an accessible approved CUDA/`nvcc` image; E5 lacks row-indexed authoritative manifests. E0–E3 modeled and E7 modeled work is technically independent but is not started while the task-level blocking protocol awaits user guidance.
 
 ## Phase 1 — Plan, Discuss, and Design
 
@@ -70,7 +72,7 @@ External comparator or GPU campaigns cannot be replaced by proxy results. A miss
 6. **Resolved:** logical, explicit physical-issued, legacy analytical, and measured-counter work remain separate.
 7. **Resolved:** scheduler priority is descending remaining dependency-path duration then `event_id`; old caller-order compatibility is removed.
 8. **Resolved design:** standard-library exhaustive serial SGS over every precedence-feasible permutation; caller-supplied budget fails with no result, and measured runtime determines documented practical limits.
-9. **Resolved and user approved:** pinned Accel-Sim/GPGPU-Sim plus pinned CUDA/`nvcc`, official A100 configuration, and one versioned synthetic PTX-mode GEMM manifest; no Hopper or `nsys` substitution.
+9. **Resolved and user approved:** separately pinned Accel-Sim framework and GPGPU-Sim distribution commits plus pinned CUDA/`nvcc`, official A100 configuration, and one versioned synthetic PTX-mode GEMM manifest; no Hopper or `nsys` substitution.
 10. **Resolved:** specification-only target calibration for four Hopper zero-shot folds, separate non-zero-shot measured primitive calibration, and a universal theorem limited to the declared fixed-duration manifest-order model.
 
 The exact-oracle decision compared, using the accepted semantic subset:

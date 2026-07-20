@@ -4,6 +4,7 @@
 
 | Date | Summary of Changes |
 |---|---|
+| 2026-07-20 | Corrected the comparator lock from a nonexistent framework submodule to a separately pinned GPGPU-Sim commit and recorded the blocked GHCR toolchain gate. |
 | 2026-07-20 | Aligned E1 with the reviewed Wave-3 scheduler/report test ownership, unique benchmark path, and separated admission counters. |
 | 2026-07-20 | Froze the approved GPGPU-Sim cycle-level benchmark, Hopper held-out folds, primitive-calibration separation, and modeled-theorem quantifiers. |
 | 2026-07-20 | Corrected E3 to treat `tensor_all_ops` as legacy analytical feature evidence and require separately proven measured-counter provenance. |
@@ -205,7 +206,7 @@ The validation denominator includes every source row. Unsupported rows are count
 
 ### External prerequisite
 
-The user approved Accel-Sim/GPGPU-Sim plus a pinned CUDA/`nvcc` environment. Phase 2 must verify the selected Accel-Sim commit, the GPGPU-Sim submodule revision pinned by it, the official A100 configuration hash, CUDA/compiler versions, executable, and synthetic workload manifest. Missing or mismatched assets abort the benchmark; event counts, `nsys`, or algorithmic complexity are not runtime substitutes.
+The user approved Accel-Sim/GPGPU-Sim plus a pinned CUDA/`nvcc` environment. Phase 2 must verify the selected Accel-Sim framework commit, an independently pinned GPGPU-Sim distribution commit, the official A100 configuration hash, CUDA/compiler versions, immutable image digest, executable, and synthetic workload manifest. The framework does not contain a GPGPU-Sim submodule and its setup script defaults to the moving `dev` branch. Missing or mismatched assets abort the benchmark; event counts, `nsys`, or algorithmic complexity are not runtime substitutes.
 
 ### Planned locations
 
@@ -242,7 +243,7 @@ speedup = comparator_simulation_runtime / DES_total_runtime
 confidence interval
 simulated latency/cycle delta
 matched_manifest_sha256
-accel_sim_commit / gpgpu_sim_submodule_commit / config_sha256
+accel_sim_commit / gpgpu_sim_commit / config_sha256
 failure/rejection count
 ```
 

@@ -4,6 +4,7 @@
 
 | Date | Summary of Changes |
 |---|---|
+| 2026-07-20 | Recorded the Wave-5 provenance audit, Claude WATCH review, official GHCR image denial, and authoritative-manifest blocker. |
 | 2026-07-20 | Recorded the incomplete first Wave-4 advisor transport and the successful PTY-backed Claude APPROVE artifact. |
 | 2026-07-20 | Recorded asynchronous `omx ask` completion behavior and the restored Wave-3 review artifacts. |
 | 2026-07-20 | Recorded user approval for the pinned Accel-Sim/GPGPU-Sim and CUDA/`nvcc` comparator environment. |
@@ -177,7 +178,7 @@
 ## Cycle-Accurate Comparator Research
 
 - Accel-Sim Framework upstream HEAD observed: `3016c658f810bdae9a14bf4534ee99e9945eedae`.
-- GPGPU-Sim distribution upstream HEAD observed separately: `a4ce3feac901c97a4b4601f679e43cf3589c79de`; an approved integration must instead record the exact submodule revision pinned by the selected framework commit.
+- GPGPU-Sim distribution upstream HEAD observed separately during Phase 1: `a4ce3feac901c97a4b4601f679e43cf3589c79de`. The framework has no submodule, so this observation is not a lock; an approved integration must select, test, and record an independent immutable GPGPU-Sim commit.
 - Official Accel-Sim README describes SASS trace generation with NVBit, trace-driven detailed simulation through GPGPU-Sim 4.x, PTX mode, hardware correlation, and the need for a real GPU when generating SASS traces.
 - Official standard config includes `A100 -> SM80_A100/gpgpusim.config`. The config declares compute capability `8.0`, `108` clusters, tensor cores, caches, interconnect, and DRAM timing. No H100/Hopper entry appeared in the standard config.
 - Upstream license is BSD-2-Clause.
@@ -194,4 +195,18 @@
 - The user selected Option A on 2026-07-20 and approved a version-pinned Accel-Sim/GPGPU-Sim dependency plus a pinned CUDA/`nvcc` build environment.
 - Provisioning remains a Phase-2 action after the Phase-1 design checkpoint is reviewed, committed, and pushed.
 - The accepted claim name is **GPGPU-Sim cycle-level PTX-mode comparison**. The approval does not change the evidence boundary: no strict silicon cycle-accuracy, Hopper equivalence, or `10000x` result is presumed.
-- The integration must verify the framework commit, the GPGPU-Sim submodule revision actually pinned by that commit, the A100 config hash, CUDA/compiler versions, benchmark manifest hash, and exact commands before producing evidence.
+- The integration must verify separate framework and GPGPU-Sim commits, the A100 config hash, immutable image digest, CUDA/compiler versions, benchmark manifest hash, and exact commands before producing evidence.
+
+## Wave-5 Entry Environment and Provenance Audit
+
+- Safe branch state at entry: `HEAD == origin/des == 550c786f16f4e008e072c9e2d2be2b3d5fe110bb`; the relevant worktree was clean when checked with the explicit `=10.1` exclusion.
+- Local toolchain: Python `3.12.3`, GCC/G++ `13.3.0`, CMake `4.3.2`, Make `4.3`, Git `2.43.0`, Docker client `29.1.3`; `nvcc` is absent and the local Docker daemon rejects access to `/var/run/docker.sock`.
+- Scratch Accel-Sim checkout: `/tmp/pipeweave-wave5-accel-sim-3016c658` at `3016c658f810bdae9a14bf4534ee99e9945eedae`, equal to upstream `HEAD` at the audit time. It has no `.gitmodules` file and zero submodule entries.
+- `gpu-simulator/setup_environment.sh` defaults to `GPGPUSIM_BRANCH=dev` and clones/checks out that moving branch. The framework commit therefore does not transitively pin GPGPU-Sim.
+- The official upstream image is `ghcr.io/accel-sim/accel-sim-framework:ubuntu-24.04-cuda-12.8`, documented as based on `nvidia/cuda:12.8.0-cudnn-devel-ubuntu24.04`. Its immutable digest has not been resolved through the approved platform path.
+- The handbook-compliant one-GPU image check first used `--predict-only`, the verified `codesign`/private-group/H800 resource selectors, and `--backoff-limit=1`. It failed before scheduling with `GET https://ghcr.io/token?...: DENIED: denied`, exit code `1`. No worker, GPU workload, compiler, simulator, or Docker daemon ran.
+- Root-cause boundary: the approved public GHCR image is denied by the platform image check. This is distinct from GPU quota availability, which previously produced ten H800 candidates, and from the default worker image, which launched but had no `nvcc`.
+- `dataset/gemm_test.csv` contains `118,800` rows and `30` columns. It lacks row-indexed Worker assignment, ordered WorkItems, K partitions, issued extents, accumulator producers, ReductionSteps, canonical CacheAccess order, reservation vectors, eligible SMs, and output visibility.
+- Independent entry review artifact: `.omx/artifacts/claude-you-are-the-independent-wave-5-entry-architecture-environmen-2026-07-20T00-00-03-244Z.md`; StepCode Claude Opus 4.6 at effort `max` returned overall **WATCH**.
+- Accepted review findings: correct the nonexistent-submodule provenance; use no new production evaluation module; keep E4 in test/performance ownership; treat E4/E6 as blocked without the controlled image/toolchain; proceed with modeled E0–E3/E7 only when the task-level blocking protocol permits.
+- Rejected review finding: constructing non-split dataset manifests from shape/tile/CTA fields conflicts with `design.md`'s manifest-only contract and Harness Gates 51, 56, and 60. No row is supported without an actual row-indexed authoritative `GemmLaunchManifest`; the direct validator continues to fail fast.

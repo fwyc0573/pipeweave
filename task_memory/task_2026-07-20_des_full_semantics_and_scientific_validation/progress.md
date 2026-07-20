@@ -4,6 +4,7 @@
 
 | Date | Summary of Changes |
 |---|---|
+| 2026-07-20 | Audited the Wave-5 environment/provenance/manifest entry, completed the independent Claude WATCH review, and stopped at the GHCR and authoritative-manifest blockers. |
 | 2026-07-20 | Committed and pushed the Wave-4 checkpoint at `350159313aa3a018700e648bce7ca5e842a34e07`, verified remote equality, and opened Wave 5. |
 | 2026-07-20 | Passed the first 25-path explicit staging and 54-entry index-hash audit with no ignored, OMX, unstaged, untracked, or diff findings. |
 | 2026-07-20 | Passed the fresh 147/400/4,725 pre-staging regressions and the corrected final static gate; documented the checker-only `__future__` false positive. |
@@ -460,3 +461,24 @@
 - **Expectation:** Preserve the reviewed 25-path index, create one Lore-compliant checkpoint, push without force, fetch the remote ref, prove exact SHA equality, and leave the relevant worktree clean.
 - **Method:** Rebuilt the post-audit checksum manifest, explicitly re-staged only the five changed delivery documents, repeated the full index audit, committed with the intent `Model authoritative GPU execution semantics before scientific evaluation`, pushed `des`, fetched `origin/des`, compared both full SHAs, and ran the safe status command excluding `=10.1`.
 - **Result:** The final index retained `25/25` exact paths, `54/54` index hashes, `38/38` summary hashes, zero path mismatches, zero ignored/OMX paths, zero relevant unstaged/untracked paths, and clean staged/unstaged diff checks. Commit `350159313aa3a018700e648bce7ca5e842a34e07` was pushed successfully; local `HEAD` and `origin/des` both equal that SHA; remote equality is `1`; and the relevant status was clean. Wave 5 is active.
+
+### 2026-07-20 — Wave-5 recovery, provenance, environment, and manifest audit
+
+- **Motivation:** Resume the interrupted evaluation phase from verified repository state and establish whether the approved comparator, measured campaign, and held-out inputs actually exist before writing any Wave-5 code.
+- **Expectation:** Preserve `HEAD == origin/des`, identify every immutable comparator asset, verify the approved environment path without guessing, quantify the dataset manifest surface, and keep all missing evidence fail-fast.
+- **Method:** Verified safe Git state excluding `=10.1`; inspected local compiler/Docker availability; verified Accel-Sim scratch commit `3016c658f810bdae9a14bf4534ee99e9945eedae` against remote `HEAD`; inspected `.gitmodules`, submodule count, and `gpu-simulator/setup_environment.sh`; checked official image/CUDA/PTX references; read all `118,800` GEMM rows and their `30`-column schema; and checked the planned E4–E7 script/result paths.
+- **Result:** Local and remote both equal `550c786f16f4e008e072c9e2d2be2b3d5fe110bb`; relevant status was clean. The framework has `0` submodules and clones a floating GPGPU-Sim `dev` branch. Local `nvcc` is absent and Docker daemon access is denied. All planned Wave-5 scripts/results are absent. The dataset lacks all ten audited authoritative manifest field families, so the existing validator correctly has no executable direct-CLI dataset path.
+
+### 2026-07-20 — Wave-5 Claude entry review and approved-image blocker
+
+- **Motivation:** Satisfy the mandatory stage-review gate, challenge redundant/defensive evaluation design, and resolve the only handbook-compliant path to the approved CUDA/`nvcc` environment.
+- **Expectation:** Obtain a non-BLOCK overall review, correct provenance errors, reject any recommendation that violates the frozen manifest-only contract, and either establish an immutable controlled image or stop the affected scientific branches with the exact external error.
+- **Method:** Ran `omx ask claude` through StepCode Claude Opus 4.6 at effort `max`; artifact `.omx/artifacts/claude-you-are-the-independent-wave-5-entry-architecture-environmen-2026-07-20T00-00-03-244Z.md`. Reconciled its WATCH findings against the exact design/harness/validator text. Then ran the verified H800 `rlaunch --predict-only` resource selectors with `--backoff-limit=1` and the official GHCR image, requesting only `nvcc --version` if the image gate succeeded.
+- **Result:** Claude returned overall **WATCH**, endorsed zero new production modules for modeled E0–E3/E7, and confirmed the independent framework/GPGPU-Sim pin and E4/E6 toolchain prerequisites. Its non-split manifest-construction suggestion was rejected because it conflicts with the frozen contract. The image check exited `1` before scheduling with `GET https://ghcr.io/token?...: DENIED: denied`; no worker or workload ran. E4/E6 and measured E2/E3 are externally blocked, while E5 is blocked by absent authoritative manifests. No fallback, alternate registry/image, heuristic construction, proxy result, code change, or `.omx` staging occurred.
+
+### 2026-07-20 — Wave-5 blocker-checkpoint fresh verification
+
+- **Motivation:** Prove that the provenance/blocker documentation checkpoint preserves every delivered Wave-1–4 behavior before any explicit staging, commit, or push.
+- **Expectation:** Pass all `400` repository tests and all `4,725` exact/SafeBound oracle cases, retain every zero-failure property metric and digest, verify all `54` checksum inputs, and introduce no production change.
+- **Method:** The first timing wrapper referenced absent GNU `/usr/bin/time` and exited `127` before pytest started. Re-read `task_memory/env_handbook.md`, confirmed the recorded root cause, and reran the unchanged commands with Bash `time` plus `TIMEFORMAT`. Ran full pytest, the independent exact/SafeBound validator, modification-history/stale-provenance checks, checksum verification, and `git diff --check` with bytecode/cache writes disabled and `=10.1` excluded.
+- **Result:** Full regression passed `400/400` in pytest `27.38s`, Bash elapsed `34.392s`, user `3.924s`, system `0.129s`, exit code `0`. The oracle passed `4,725/4,725` cases, `28,350` permutations, and `18,360` monotonicity checks in internal `4.213545690s`, Bash elapsed `4.298s`; exact mismatches, safety violations, permutation mismatches, conservation failures, and monotonicity failures were all `0`; maximum absolute delta remained `0.0`; digest remained `5e173514000270d7c5d2a504b1adcd9d62f9285ee6d12819a48397c63724da67`. Checksum verification passed `54/54`, changed-document histories passed `10/10`, stale provenance hits were `0`, and diff errors were `0`.

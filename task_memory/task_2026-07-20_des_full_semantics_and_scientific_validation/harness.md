@@ -4,6 +4,7 @@
 
 | Date | Summary of Changes |
 |---|---|
+| 2026-07-20 | Corrected the comparator gate to require separately pinned Accel-Sim framework and GPGPU-Sim distribution commits. |
 | 2026-07-20 | Added the reviewed Wave-4 manifest-only lowering, cache-traffic primitive, worker/reduction, FA-affinity, topology, and authoritative-validator gates. |
 | 2026-07-20 | Added reservation-normalized SafeBound demand, explicit greedy no-progress, and graph-validation timing boundaries. |
 | 2026-07-20 | Added Phase-1 checkpoint, calibration-use separation, held-out prediction freeze, modeled-universal quantifier, and approved comparator lock gates. |
@@ -49,7 +50,7 @@
 
 ## Scientific-Evidence Gates
 
-24. **Cycle-Level Comparator Gate:** Speedup requires the approved version-pinned GPGPU-Sim PTX-mode comparator, the same A100 manifest/boundary, reproducible commands, and measured wall-clock runtime; strict silicon cycle-accuracy is not claimed.
+24. **Cycle-Level Comparator Gate:** Speedup requires separately pinned Accel-Sim framework and GPGPU-Sim distribution commits, the approved GPGPU-Sim PTX-mode comparator, the same A100 manifest/boundary, reproducible commands, and measured wall-clock runtime; strict silicon cycle-accuracy is not claimed.
 25. **Held-Out Zero-Shot Gate:** Target hardware is excluded from fitting, measured calibration, threshold selection, rule changes, and development decisions for the held-out study.
 26. **Calibration-Provenance Gate:** Measured-hardware calibration declares the fitted primitive parameters, calibration workload, units, uncertainty, and non-overlap with evaluation data.
 27. **Calibration-Use Separation Gate:** Specification calibration is the only target calibration allowed in zero-shot. Target measured primitive calibration is reported as a separate non-zero-shot empirical audit and never silently certifies a physical lower bound.

@@ -4,6 +4,7 @@
 
 | Date | Summary of Changes |
 |---|---|
+| 2026-07-20 | Recorded the Wave-5 provenance correction, Claude WATCH review, GHCR image denial, and authoritative-manifest blockers without narrowing the remaining objective. |
 | 2026-07-20 | Recorded the pushed Wave-4 implementation commit and remote-equality proof, then advanced the remaining scope to Wave 5. |
 | 2026-07-20 | Recorded the exact-path staging and index-checksum audit while retaining commit/push equality as pending. |
 | 2026-07-20 | Added the final Wave-4 Claude delivery-package approval and fresh pre-staging regression/static/checksum evidence. |
@@ -17,7 +18,7 @@
 
 This umbrella task remains active. Phase 1 and Phase-2 Waves 1--4 are complete at the modeled implementation level and independently approved. They now implement and validate the normalized Event/resource kernel, finite exact schedule oracle, scalable order-invariant SafeBound, deterministic feasible scheduler, provenance-separated reporting, scheduler scaling benchmark, manifest-order HBM/L2 cache state, authoritative `GemmLaunchManifest`, persistent Worker lifetimes, split-K/reduction, logical versus physical-issued work, explicit FA affinity, two-level hardware topology, and row-indexed authoritative validation.
 
-Wave 4 passed its focused `147/147` suite, full `400/400` repository regression, exhaustive proof regression, numeric contract audit, and both StepCode Claude `APPROVE` gates. Lore commit `350159313aa3a018700e648bce7ca5e842a34e07` was pushed, fetched, and matched by local `HEAD` and `origin/des`; the relevant worktree was clean at the Wave-5 handoff. Wave 5 still owns the approved GPGPU-Sim cycle-level PTX-mode comparison, authoritative dataset manifest provisioning, measured primitive calibration, held-out hardware studies, final modeled theorem audit, and separate finite measured-hardware audit. This interim archive does not claim that the full umbrella task is complete.
+Wave 4 passed its focused `147/147` suite, full `400/400` repository regression, exhaustive proof regression, numeric contract audit, and both StepCode Claude `APPROVE` gates. Lore commit `350159313aa3a018700e648bce7ca5e842a34e07` was pushed; the subsequent delivery-record checkpoint leaves local and remote at `550c786f16f4e008e072c9e2d2be2b3d5fe110bb` before this Wave-5 audit. The Wave-5 entry review returned WATCH. The official Accel-Sim GHCR image is denied by the platform image gate, and the GEMM dataset has no row-indexed authoritative manifests. These conditions block the GPGPU-Sim comparison, measured primitive calibration, and held-out GEMM studies without authorizing proxy evidence or a smaller completion claim. This interim archive does not claim that the full umbrella task is complete.
 
 ## Deliverables Inventory
 
@@ -98,7 +99,12 @@ The complete Wave-4 delivery set, including all current task documents, is enume
 | Wave-4 static pre-staging audit | Parse/style/legacy/signature/history/hash/diff clean | `14/14` AST parsed; `0` added Python lines over 88; `0` unused imports; `0` legacy hits; signature `1`; histories `19/19`; checksums `54/54`; `0` diff errors | `0` failures | PASS |
 | Wave-4 exact-path staging audit | Exact paths, hashes, no forbidden/runtime paths | `25/25` paths; `54/54` index hashes; `0` ignored/OMX/unstaged/untracked/diff findings | `0` failures | PASS |
 | Wave-4 commit/push and remote equality | Lore commit pushed; local equals remote | commit `350159313aa3a018700e648bce7ca5e842a34e07`; local and `origin/des` equal; clean handoff | equality `1` | PASS |
-| Wave-5 external/scientific campaigns | All declared E0--E7 gates pass | Not started at this checkpoint | Pending | PENDING |
+| Wave-5 blocker-checkpoint regression | Preserve all delivered behavior after documentation-only audit | `400/400` tests in `27.38s`; Bash elapsed `34.392s` | `0` failures | PASS |
+| Wave-5 blocker-checkpoint proof audit | Preserve exact/SafeBound corpus and properties | `4,725/4,725`; `28,350` permutations; `18,360` monotonicity checks | `0` mismatches/violations/failures | PASS |
+| Wave-5 entry Claude review | No unadjudicated BLOCK; minimal ownership retained | WATCH; zero new production modules authorized | `0` production changes | PASS with WATCH |
+| Official comparator image gate | Approved immutable CUDA/`nvcc` image is accessible | GHCR token request returned `DENIED: denied`, exit code `1` | image launches `0` | BLOCKED |
+| Dataset manifest gate | Nonzero row-indexed authoritative manifest support | `118,800` rows; required manifest field families present `0/10` | supported rows `0` | BLOCKED |
+| Wave-5 external/scientific campaigns | All declared E0--E7 gates pass | E4/E6 blocked by image; E5 blocked by manifests; modeled audits not started after stop gate | incomplete branches `8/8` | BLOCKED |
 
 The `legacy/new` scheduler benchmark ratio is a size-matched historical ratio only. The first five historical values are legacy scheduler-time medians, while the new denominator is graph construction/validation plus scheduling plus report assembly. It is not a stage-matched speedup, a controlled machine comparison, a cycle-level result, or evidence for a `10000x` claim.
 
@@ -106,8 +112,8 @@ The `legacy/new` scheduler benchmark ratio is a size-matched historical ratio on
 
 ### Remaining in the current task
 
-1. Provision and run the approved pinned Accel-Sim/GPGPU-Sim plus pinned CUDA/`nvcc` A100 synthetic PTX-mode comparison. Do not substitute `nsys` or claim Hopper/silicon equivalence.
-2. Provision authoritative row-indexed dataset manifests, freeze predictions before target latency joins, and run the four within-Hopper held-out folds; run cross-architecture folds only where manifest support is nonzero.
+1. Obtain an approved accessible immutable CUDA/`nvcc` image, separately pin and test the Accel-Sim framework and GPGPU-Sim commits, then run the A100 synthetic PTX-mode comparison. Do not substitute `nsys` or claim Hopper/silicon equivalence.
+2. Provision authoritative row-indexed dataset manifests, freeze predictions before target latency joins, and run the four within-Hopper held-out folds; current support is zero and cross-architecture folds remain prohibited until support is nonzero.
 3. Run the measured primitive calibration campaign, universal modeled theorem audit, and separate finite measured-hardware audit, retaining every unsupported row and violation.
 4. Complete final README/design/evidence updates, full regression, independent design/code/science review, final hashes, Lore commit, push, and remote equality verification.
 
@@ -117,6 +123,7 @@ The `legacy/new` scheduler benchmark ratio is a size-matched historical ratio on
 - `SchedulingNoProgressError` is the explicit boundary of the fixed greedy scheduler and is not a graph-infeasibility certificate.
 - All known `operator_type` values currently derive the same two-level topology; this is a documented transition boundary, not authorization for a second policy module.
 - The direct GEMM validation CLI has no authoritative row-indexed dataset manifest artifact yet and therefore fails fast rather than reconstructing launch policy.
-- External comparator binaries, pinned CUDA/`nvcc`, controlled GPU/counter access, and authoritative cross-architecture manifests still require execution/provisioning evidence; no proxy result may close these gates.
+- The official GHCR comparator image is denied by the current `rlaunch` image gate; an accessible approved immutable image or registry-access change is required.
+- All held-out GEMM rows lack authoritative row-indexed manifests under the frozen contract; shape/tile/CTA reconstruction remains prohibited.
 
 No work has been accepted as an extension outside the current task; `future.md` remains reserved for genuinely out-of-session scope.

@@ -4,6 +4,7 @@
 
 | Date | Summary of Changes |
 |---|---|
+| 2026-07-20 | Added the Wave-5 GPGPU-Sim pinning, GHCR image-access, and authoritative dataset-manifest blockers. |
 | 2026-07-20 | Resolved FSV-033 by excluding Python `__future__` compiler directives from the final unused-import audit. |
 | 2026-07-20 | Reconciled FSV-002 through FSV-006 and FSV-013 with the delivered Wave-1–4 modeled implementation while retaining measured/data evidence gaps. |
 | 2026-07-20 | Resolved the final Wave-4 added-line length failure at its single test-expression owner and restored the complete static gate. |
@@ -270,3 +271,24 @@
 - **Root cause:** The inline AST checker collected every `ImportFrom` binding but detected usage only through loaded `Name` nodes. `from __future__ import annotations` changes compiler behavior and does not create a runtime use of the bound word `annotations`, so the checker produced a false positive.
 - **Impact:** The first final static command exited before the downstream legacy/history/diff checks even though `operators.py` had no actual unused runtime import. Editing production to satisfy the faulty checker would have removed intentional annotation semantics.
 - **Resolution:** Excluded only imports whose module is `__future__` from the unused-runtime-symbol audit and reran the complete gate. Actual unused imports are `0`; all `14/14` Python files parse; added lines over 88, forbidden hits, and diff errors are `0`; signature match is `1`; histories pass `19/19`. No repository source or test was changed for this checker-only defect.
+
+### FSV-034 — The pinned Accel-Sim framework does not pin GPGPU-Sim
+
+- **Status:** Open provenance prerequisite; incorrect documentation wording resolved on 2026-07-20.
+- **Root cause:** Framework commit `3016c658f810bdae9a14bf4534ee99e9945eedae` has no `.gitmodules` file. Its setup script clones `gpgpu-sim_distribution` and defaults to the moving `dev` branch, so the previously documented framework-transitive GPGPU-Sim pin does not exist.
+- **Impact:** A comparator run that records only the framework SHA is not reproducible. R9 cannot begin until a separately selected GPGPU-Sim commit is tested and locked together with the compiler, image digest, A100 config, and workload manifest.
+- **Resolution:** Corrected `design.md`, `experiments.md`, `harness.md`, `notes.md`, and `requirements_matrix.md` to require independent immutable framework and GPGPU-Sim commits. No floating branch was relabeled as a pin and no untested commit was promoted into a toolchain lock.
+
+### FSV-035 — The approved Accel-Sim GHCR image is denied by the platform image gate
+
+- **Status:** BLOCKED pending an approved accessible image digest or registry-access change.
+- **Root cause:** The handbook-compliant `rlaunch --predict-only --image ghcr.io/accel-sim/accel-sim-framework:ubuntu-24.04-cuda-12.8` request failed during the platform image check with `GET https://ghcr.io/token?...: DENIED: denied`, exit code `1`. The company Docker mirror explicitly applies only to `docker.io`, so it cannot authorize or proxy this GHCR image.
+- **Impact:** E4 cannot compile or run the synthetic PTX comparator, and E6 cannot compile or execute measured H800 primitive benchmarks. The measured-counter portions of E2/E3 are affected by the same controlled-toolchain gap. No image digest, `nvcc` version, comparator binary, or raw measurement can be reported.
+- **Resolution:** No fallback registry, alternate image, local Docker build, `nsys` proxy, or unpinned toolchain was attempted. Valid resolution requires the user or platform to provide/authorize an accessible internal image with immutable digest and the approved CUDA/`nvcc` environment, or to enable the official GHCR image path.
+
+### FSV-036 — The GEMM dataset has no authoritative row-indexed launch manifests
+
+- **Status:** BLOCKED pending authoritative manifests or an explicit user-approved contract redesign.
+- **Root cause:** The `118,800`-row CSV exposes only coarse tile, `is_split_k`, and CTA-count fields. It does not encode Worker assignment, ordered WorkItems, explicit K partitions, issued extents, accumulator/reduction topology, cache order, reservation vectors, affinity, or output visibility.
+- **Impact:** E5 within-Hopper and cross-architecture held-out studies cannot call the manifest-only lowering or sole validator. Cross-architecture support remains zero; unsupported rows cannot be silently removed. The full R10 evidence gate remains unproven.
+- **Resolution:** Rejected the entry review's suggestion to construct a “trivial non-split” manifest from shape/tile/CTA values because it conflicts with the frozen `design.md` rule and Harness Gates 51, 56, and 60. No heuristic reconstruction, implicit ordinary-CTA substitution, second validator, or support-denominator reduction was introduced.
